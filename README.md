@@ -41,9 +41,3 @@ A sleek, responsive, and high-performance Snake game built with **React**, **Typ
    ```bash
    git clone [https://github.com/farmanullah1/Snake-Game.git](https://github.com/farmanullah1/Snake-Game.git)
    cd Snake-Game
-Install dependencies:Bashnpm install
-Run the development server:Bashnpm run dev
-Build for production:Bashnpm run build
-📖 ControlsInputActionArrow Keys / WASDMove SnakeSpace / ESCPause/Resume GameOn-Screen D-PadMobile ControlsSwipe GesturesMobile Movement👨‍💻 AuthorFarmanullah Ansari Software Engineer & Full-Stack DeveloperGitHub: @farmanullah1LinkedIn: Farmanullah AnsariEnjoy the game! If you like this project, feel free to give it a ⭐!
----
-

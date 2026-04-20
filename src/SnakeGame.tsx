@@ -1,855 +1,1258 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, {
+  useState, useEffect, useRef, useCallback, useMemo
+} from 'react';
 
-// ── Types ──────────────────────────────────────────────────────────────────
-type Point = { x: number; y: number };
-type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
-type GameState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER';
-type Difficulty = 'CHILL' | 'NORMAL' | 'TURBO';
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+type Point        = { x: number; y: number };
+type Direction    = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+type GameState    = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER' | 'COUNTDOWN';
+type GameMode     = 'CLASSIC' | 'FREE_ROAM';
+type Difficulty   = 'CHILL' | 'NORMAL' | 'TURBO';
+type PowerUpType  = 'SHIELD' | 'SLOW' | 'DOUBLE' | 'GHOST_MODE';
+type SkinId       = 'classic' | 'neon' | 'fire' | 'ice' | 'gold' | 'rainbow';
+type Achievement  = { id: string; label: string; icon: string; desc: string; unlocked: boolean; ts?: number; };
+type FloatingText = { id: number; x: number; y: number; text: string; color: string; };
+type Particle     = { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number; };
 
-// ── Constants ──────────────────────────────────────────────────────────────
-const CELL_SIZE = 20;
-const GRID_WIDTH = 20;
-const GRID_HEIGHT = 20;
-const CANVAS_SIZE = CELL_SIZE * GRID_WIDTH; // 400px
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+const CELL = 20;
+const COLS = 20;
+const ROWS = 20;
+const CS   = CELL * COLS; // 400
 
-const SPEED_MAP: Record<Difficulty, { base: number; min: number; increment: number }> = {
-  CHILL: { base: 200, min: 100, increment: 3 },
-  NORMAL: { base: 140, min: 60, increment: 5 },
-  TURBO: { base: 80, min: 30, increment: 6 },
+const SPEED: Record<Difficulty, { base: number; min: number; inc: number }> = {
+  CHILL:  { base: 200, min: 100, inc: 3 },
+  NORMAL: { base: 140, min: 55,  inc: 5 },
+  TURBO:  { base: 75,  min: 25,  inc: 7 },
 };
 
-const INITIAL_SNAKE: Point[] = [
-  { x: 10, y: 10 },
-  { x: 9, y: 10 },
-  { x: 8, y: 10 },
-];
-const INITIAL_DIRECTION: Direction = 'RIGHT';
+const SKIN_DEFS: Record<SkinId, { name: string; head: [string,string]; body: [string,string]; glow: string; icon: string }> = {
+  classic: { name:'Classic', head:['#0052d4','#4364f7'], body:['#00c6ff','#0072ff'], glow:'#0072ff', icon:'🔵' },
+  neon:    { name:'Neon',    head:['#00ffa6','#00e5ff'], body:['#00ff87','#60efff'], glow:'#00ff87', icon:'💚' },
+  fire:    { name:'Fire',    head:['#ff4e00','#ec9f05'], body:['#ff6b35','#f7c59f'], glow:'#ff4e00', icon:'🔥' },
+  ice:     { name:'Ice',     head:['#a8edea','#fed6e3'], body:['#d3f9d8','#a8edea'], glow:'#a8edea', icon:'❄️' },
+  gold:    { name:'Gold',    head:['#f7971e','#ffd200'], body:['#ffb347','#ffd700'], glow:'#ffd200', icon:'⭐' },
+  rainbow: { name:'Rainbow', head:['#ff0080','#7928ca'], body:['#ff0080','#7928ca'], glow:'#ff0080', icon:'🌈' },
+};
 
-function getRandomFoodPosition(snake: Point[]): Point {
-  let position: Point;
-  do {
-    position = {
-      x: Math.floor(Math.random() * GRID_WIDTH),
-      y: Math.floor(Math.random() * GRID_HEIGHT),
-    };
-  } while (snake.some((segment) => segment.x === position.x && segment.y === position.y));
-  return position;
+const DIFFS: Difficulty[] = ['CHILL','NORMAL','TURBO'];
+
+const ACHIEVEMENT_DEFS: Omit<Achievement,'unlocked'>[] = [
+  { id:'first_food',  icon:'🍎', label:'First Bite',    desc:'Eat your first food' },
+  { id:'score_50',    icon:'⭐', label:'Rising Star',    desc:'Score 50 points' },
+  { id:'score_100',   icon:'🌟', label:'Century',        desc:'Score 100 points' },
+  { id:'score_250',   icon:'💫', label:'Legend',         desc:'Score 250 points' },
+  { id:'score_500',   icon:'🏆', label:'Champion',       desc:'Score 500 points' },
+  { id:'length_10',   icon:'🐍', label:'Growing Strong', desc:'Reach length 10' },
+  { id:'length_20',   icon:'🐉', label:'Dragon Mode',    desc:'Reach length 20' },
+  { id:'survive_60',  icon:'🧱', label:'Wall Dodger',    desc:'Survive 60 seconds' },
+  { id:'power_up',    icon:'⚡', label:'Powered Up',     desc:'Collect a power-up' },
+  { id:'bonus_food',  icon:'✨', label:'Bonus Hunter',   desc:'Eat bonus food' },
+  { id:'turbo_100',   icon:'🚀', label:'Speed Demon',    desc:'Score 100 in TURBO mode' },
+  { id:'chill_250',   icon:'🧊', label:'Zen Master',     desc:'Score 250 in CHILL mode' },
+  { id:'combo_5',     icon:'🔥', label:'Combo King',     desc:'5x food combo streak' },
+  { id:'shield_used', icon:'🛡️', label:'Shielded',       desc:'Block a death with shield' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THEMES
+// ─────────────────────────────────────────────────────────────────────────────
+const THEMES = {
+  light: {
+    bg:        ['#f0fffe','#e8f4fd','#f5f9ff'],
+    gridLine:  'rgba(100,160,200,0.10)',
+    border:    'rgba(0,114,255,0.18)',
+    uiText:    '#0a0f1e',
+    uiSub:     '#5a6a7a',
+    uiAccent:  '#0072ff',
+    uiAccent2: '#00c6ff',
+    scoreBg:   'rgba(0,114,255,0.05)',
+    btnPri:    'linear-gradient(135deg,#00c6ff,#0072ff)',
+    btnPriTxt: '#fff',
+    btnSec:    'rgba(0,114,255,0.08)',
+    btnSecBdr: 'rgba(0,114,255,0.35)',
+    btnSecTxt: '#0072ff',
+    food1:     '#ff416c',
+    food2:     '#ff4b2b',
+    foodGlow:  '#ff416c',
+    pauseOvl:  'rgba(240,255,254,0.88)',
+    modalBg:   'rgba(248,255,254,0.97)',
+    dark:      false,
+  },
+  dark: {
+    bg:        ['#060614','#0d0b2b','#140a20'],
+    gridLine:  'rgba(96,239,255,0.038)',
+    border:    'rgba(96,239,255,0.18)',
+    uiText:    '#e8f4ff',
+    uiSub:     '#7a90b0',
+    uiAccent:  '#60efff',
+    uiAccent2: '#00ff87',
+    scoreBg:   'rgba(96,239,255,0.055)',
+    btnPri:    'linear-gradient(135deg,#00ff87,#60efff)',
+    btnPriTxt: '#060614',
+    btnSec:    'rgba(96,239,255,0.07)',
+    btnSecBdr: 'rgba(96,239,255,0.35)',
+    btnSecTxt: '#60efff',
+    food1:     '#ff00cc',
+    food2:     '#ff6a00',
+    foodGlow:  '#ff00cc',
+    pauseOvl:  'rgba(6,6,20,0.88)',
+    modalBg:   'rgba(6,6,20,0.97)',
+    dark:      true,
+  },
+};
+type ThemeKey = 'light' | 'dark';
+type Theme    = typeof THEMES['light'];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+const randomCell = (exclude: Point[]): Point => {
+  let p: Point;
+  do { p = { x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS) }; }
+  while (exclude.some(e => e.x===p.x && e.y===p.y));
+  return p;
+};
+const vibrate = (p: number | number[]) => { try { navigator.vibrate?.(p); } catch {} };
+const lsGet = (k: string, fb: string) => { try { return localStorage.getItem(k) ?? fb; } catch { return fb; } };
+const lsSet = (k: string, v: string)  => { try { localStorage.setItem(k, v); }         catch {} };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS DRAW
+// ─────────────────────────────────────────────────────────────────────────────
+function rrect(ctx: CanvasRenderingContext2D, x:number, y:number, w:number, h:number, r:number) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
 }
 
-// ── Theme definitions ──────────────────────────────────────────────────────
-const lightTheme = {
-  bg1: '#e0f7fa',
-  bg2: '#ffffff',
-  gridLine: '#dfe6e9',
-  snakeHead: '#0052d4',
-  snakeBody1: '#00c6ff',
-  snakeBody2: '#0072ff',
-  food1: '#ff416c',
-  food2: '#ff4b2b',
-  border: '#b2dfdb',
-  uiBg: 'rgba(255, 255, 255, 0.85)',
-  uiText: '#1a1a2e',
-  uiAccent: '#0072ff',
-  uiSubtext: '#636e72',
-  modalBg: 'rgba(224, 247, 250, 0.97)',
-  scoreBg: 'rgba(255, 255, 255, 0.7)',
-  buttonBg: 'linear-gradient(135deg, #00c6ff, #0072ff)',
-  buttonText: '#fff',
-  pauseOverlay: 'rgba(0, 0, 0, 0.08)',
-};
+interface DS {
+  snake:Point[]; food:{pos:Point;pulse:number;};
+  bonusFood:{pos:Point;ttl:number;}|null;
+  powerUp:{pos:Point;type:PowerUpType;pulse:number;}|null;
+  gameState:GameState; theme:Theme; dark:boolean;
+  skin:SkinId; countdown:number;
+  particles:Particle[]; floats:FloatingText[];
+  ghostMode:boolean; shieldActive:boolean;
+  rainbowHue:number; showGrid:boolean;
+}
 
-const darkTheme = {
-  bg1: '#0f0c29',
-  bg2: '#24243e',
-  gridLine: '#2d3436',
-  snakeHead: '#00ffa6',
-  snakeBody1: '#00ff87',
-  snakeBody2: '#60efff',
-  food1: '#ff00cc',
-  food2: '#ff6a00',
-  border: '#302b63',
-  uiBg: 'rgba(15, 12, 41, 0.92)',
-  uiText: '#eaf6ff',
-  uiAccent: '#60efff',
-  uiSubtext: '#a0aec0',
-  modalBg: 'rgba(15, 12, 41, 0.97)',
-  scoreBg: 'rgba(255, 255, 255, 0.05)',
-  buttonBg: 'linear-gradient(135deg, #00ff87, #60efff)',
-  buttonText: '#0f0c29',
-  pauseOverlay: 'rgba(0, 0, 0, 0.35)',
-};
+function drawCanvas(ctx:CanvasRenderingContext2D, d:DS) {
+  const { snake,food,bonusFood,powerUp,gameState,theme,dark,skin,countdown,
+          particles,floats,ghostMode,shieldActive,rainbowHue,showGrid } = d;
+  const W=CS, H=CS, T=theme;
 
-type Theme = typeof lightTheme;
+  // BG
+  const bgG = ctx.createLinearGradient(0,0,W,H);
+  T.bg.forEach((c,i) => bgG.addColorStop(i/(T.bg.length-1), c));
+  ctx.fillStyle = bgG; ctx.fillRect(0,0,W,H);
 
-// ── Drawing utilities ──────────────────────────────────────────────────────
-const drawRoundedRect = (
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number
-) => {
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + width - radius, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-  ctx.lineTo(x + width, y + height - radius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  ctx.lineTo(x + radius, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-};
-
-const drawGame = (
-  ctx: CanvasRenderingContext2D,
-  snake: Point[],
-  food: Point,
-  theme: Theme,
-  isDarkMode: boolean,
-  gameState: GameState
-) => {
-  const size = CANVAS_SIZE;
-  // Background gradient
-  const bgGradient = ctx.createLinearGradient(0, 0, size, size);
-  bgGradient.addColorStop(0, theme.bg1);
-  bgGradient.addColorStop(1, theme.bg2);
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(0, 0, size, size);
-
-  // Grid lines
-  ctx.strokeStyle = theme.gridLine;
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i <= GRID_WIDTH; i++) {
-    ctx.beginPath();
-    ctx.moveTo(i * CELL_SIZE, 0);
-    ctx.lineTo(i * CELL_SIZE, size);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i * CELL_SIZE);
-    ctx.lineTo(size, i * CELL_SIZE);
-    ctx.stroke();
+  // Scanlines
+  if (dark) {
+    for (let y=0; y<H; y+=4) { ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(0,y,W,1); }
   }
 
-  // Draw food with glow and shine
-  const foodX = food.x * CELL_SIZE + CELL_SIZE / 2;
-  const foodY = food.y * CELL_SIZE + CELL_SIZE / 2;
-  const foodGradient = ctx.createRadialGradient(foodX, foodY, 2, foodX, foodY, CELL_SIZE / 2);
-  foodGradient.addColorStop(0, theme.food1);
-  foodGradient.addColorStop(1, theme.food2);
-  ctx.save();
-  ctx.shadowColor = theme.food1;
-  ctx.shadowBlur = isDarkMode ? 16 : 8;
-  ctx.fillStyle = foodGradient;
-  ctx.beginPath();
-  ctx.arc(foodX, foodY, CELL_SIZE / 2 - 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-  ctx.beginPath();
-  ctx.arc(foodX - 3, foodY - 3, 3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // Draw snake
-  snake.forEach((segment, idx) => {
-    const x = segment.x * CELL_SIZE + 1;
-    const y = segment.y * CELL_SIZE + 1;
-    const segSize = CELL_SIZE - 2;
-    const radius = idx === 0 ? 6 : 4;
-
-    ctx.save();
-    if (isDarkMode) {
-      ctx.shadowColor = idx === 0 ? theme.snakeHead : theme.snakeBody1;
-      ctx.shadowBlur = idx === 0 ? 18 : 10;
+  // Grid
+  if (showGrid) {
+    ctx.strokeStyle = T.gridLine; ctx.lineWidth = 0.5;
+    for (let i=0; i<=COLS; i++) {
+      ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*CELL); ctx.lineTo(W,i*CELL); ctx.stroke();
     }
+  }
 
-    if (idx === 0) {
-      // Snake head
-      const headGradient = ctx.createLinearGradient(x, y, x + segSize, y + segSize);
-      headGradient.addColorStop(0, theme.snakeHead);
-      headGradient.addColorStop(1, theme.snakeBody1);
-      ctx.fillStyle = headGradient;
-      drawRoundedRect(ctx, x, y, segSize, segSize, radius);
-      ctx.fill();
+  // Particles
+  particles.forEach(p => {
+    ctx.save(); ctx.globalAlpha=p.life;
+    ctx.shadowColor=p.color; ctx.shadowBlur=dark?8:3;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
 
-      // Eyes
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = isDarkMode ? '#0f0c29' : '#fff';
-      const headPos = snake[0];
-      const nextSegment = snake[1] || { x: headPos.x - 1, y: headPos.y };
-      const deltaX = headPos.x - nextSegment.x;
-      const deltaY = headPos.y - nextSegment.y;
-      const centerX = headPos.x * CELL_SIZE + CELL_SIZE / 2;
-      const centerY = headPos.y * CELL_SIZE + CELL_SIZE / 2;
-      const leftEyeX = centerX + deltaY * 4 + deltaX * 3;
-      const leftEyeY = centerY - deltaX * 4 + deltaY * 3;
-      const rightEyeX = centerX - deltaY * 4 + deltaX * 3;
-      const rightEyeY = centerY + deltaX * 4 + deltaY * 3;
-      ctx.beginPath();
-      ctx.arc(leftEyeX, leftEyeY, 2.5, 0, Math.PI * 2);
-      ctx.arc(rightEyeX, rightEyeY, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = isDarkMode ? '#00ffa6' : '#0052d4';
-      ctx.beginPath();
-      ctx.arc(leftEyeX + deltaX, leftEyeY + deltaY, 1.2, 0, Math.PI * 2);
-      ctx.arc(rightEyeX + deltaX, rightEyeY + deltaY, 1.2, 0, Math.PI * 2);
-      ctx.fill();
+  // Power-up on board
+  if (powerUp) {
+    const px=powerUp.pos.x*CELL+CELL/2, py=powerUp.pos.y*CELL+CELL/2;
+    const pulse=0.78+Math.sin(powerUp.pulse)*0.22;
+    const r=(CELL/2-1)*pulse;
+    ctx.save();
+    ctx.shadowColor='#ffd200'; ctx.shadowBlur=dark?22:10;
+    const pG=ctx.createRadialGradient(px,py,1,px,py,r);
+    pG.addColorStop(0,'#fffacc'); pG.addColorStop(1,'#ffd200');
+    ctx.fillStyle=pG; rrect(ctx,px-r,py-r,r*2,r*2,5); ctx.fill();
+    ctx.shadowBlur=0;
+    const icons:Record<PowerUpType,string>={SHIELD:'🛡',SLOW:'🐢',DOUBLE:'×2',GHOST_MODE:'👻'};
+    ctx.font=`bold ${CELL-5}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(icons[powerUp.type],px,py);
+    ctx.restore();
+  }
+
+  // Bonus food
+  if (bonusFood) {
+    const bx=bonusFood.pos.x*CELL+CELL/2, by=bonusFood.pos.y*CELL+CELL/2;
+    ctx.save(); ctx.globalAlpha=Math.min(1,bonusFood.ttl/40);
+    ctx.shadowColor='#ff00cc'; ctx.shadowBlur=dark?20:9;
+    const bG=ctx.createRadialGradient(bx,by,1,bx,by,CELL/2-1);
+    bG.addColorStop(0,'#ff00cc'); bG.addColorStop(1,'#7b00ff');
+    ctx.fillStyle=bG; rrect(ctx,bonusFood.pos.x*CELL+2,bonusFood.pos.y*CELL+2,CELL-4,CELL-4,6);
+    ctx.fill(); ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.font=`bold ${CELL-5}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('★',bx,by); ctx.restore();
+  }
+
+  // Main food
+  {
+    const fx=food.pos.x*CELL+CELL/2, fy=food.pos.y*CELL+CELL/2;
+    const pulse=0.84+Math.sin(food.pulse)*0.16;
+    const r=(CELL/2-1.5)*pulse;
+    ctx.save();
+    ctx.shadowColor=T.foodGlow; ctx.shadowBlur=dark?20:9;
+    const fG=ctx.createRadialGradient(fx-r*0.25,fy-r*0.25,0,fx,fy,r);
+    fG.addColorStop(0,T.food1); fG.addColorStop(1,T.food2);
+    ctx.fillStyle=fG; ctx.beginPath(); ctx.arc(fx,fy,r,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0; ctx.fillStyle='rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(fx-r*0.3,fy-r*0.3,r*0.28,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Snake
+  const sk = SKIN_DEFS[skin];
+  snake.forEach((seg,i) => {
+    const x=seg.x*CELL+1, y=seg.y*CELL+1, sz=CELL-2;
+    const rad=i===0?7:4;
+    const ratio=snake.length>1?i/(snake.length-1):0;
+    ctx.save();
+    ctx.globalAlpha = ghostMode ? (i===0?0.55:0.35) : 1;
+    if (dark) {
+      const hue = skin==='rainbow' ? (rainbowHue+i*18)%360 : -1;
+      ctx.shadowBlur = i===0?22:13;
+      ctx.shadowColor = hue>=0 ? `hsl(${hue},100%,60%)` : (i===0?sk.head[0]:sk.glow);
+    }
+    let fill: string|CanvasGradient;
+    if (skin==='rainbow') {
+      const h=(rainbowHue+i*18)%360, h2=(h+30)%360;
+      const rg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      rg.addColorStop(0,`hsl(${h},100%,${i===0?52:58}%)`);
+      rg.addColorStop(1,`hsl(${h2},100%,62%)`);
+      fill=rg;
+    } else if (i===0) {
+      const hg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      hg.addColorStop(0,sk.head[0]); hg.addColorStop(1,sk.head[1]); fill=hg;
     } else {
-      // Snake body with gradient
-      const ratio = idx / (snake.length - 1);
-      const bodyGradient = ctx.createLinearGradient(x, y, x + segSize, y + segSize);
-      bodyGradient.addColorStop(0, theme.snakeBody1);
-      bodyGradient.addColorStop(1, theme.snakeBody2);
-      ctx.globalAlpha = 1 - ratio * 0.3;
-      ctx.fillStyle = bodyGradient;
-      drawRoundedRect(ctx, x, y, segSize, segSize, radius);
+      const bg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      bg.addColorStop(0,sk.body[0]); bg.addColorStop(1,sk.body[1]);
+      ctx.globalAlpha=ghostMode?0.28:(1-ratio*0.28); fill=bg;
+    }
+    ctx.fillStyle=fill; rrect(ctx,x,y,sz,sz,rad); ctx.fill();
+    
+    // Shield ring
+    if (i===0&&shieldActive) {
+      ctx.save(); ctx.globalAlpha=0.7;
+      ctx.strokeStyle='#ffd200'; ctx.lineWidth=2.5;
+      ctx.shadowColor='#ffd200'; ctx.shadowBlur=14;
+      rrect(ctx,x-2.5,y-2.5,sz+5,sz+5,rad+3); ctx.stroke();
+      ctx.restore();
+    }
+    
+    // Eyes
+    if (i===0) {
+      ctx.globalAlpha=1; ctx.shadowBlur=0;
+      const hp=snake[0], nx2=snake[1]??{x:hp.x-1,y:hp.y};
+      const dx=hp.x-nx2.x, dy=hp.y-nx2.y;
+      const cx=hp.x*CELL+CELL/2, cy=hp.y*CELL+CELL/2;
+      ctx.fillStyle='#fff';
+      ctx.beginPath();
+      ctx.arc(cx+dy*4+dx*3,cy-dx*4+dy*3,2.8,0,Math.PI*2);
+      ctx.arc(cx-dy*4+dx*3,cy+dx*4+dy*3,2.8,0,Math.PI*2);
       ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.fillStyle='#001133';
+      ctx.beginPath();
+      ctx.arc(cx+dy*4+dx*4.3,cy-dx*4+dy*4.3,1.4,0,Math.PI*2);
+      ctx.arc(cx-dy*4+dx*4.3,cy+dx*4+dy*4.3,1.4,0,Math.PI*2);
+      ctx.fill();
     }
     ctx.restore();
   });
 
+  // Floating texts
+  floats.forEach(ft => {
+    ctx.save();
+    ctx.font=`bold 13px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=ft.color; ctx.shadowColor=ft.color; ctx.shadowBlur=8;
+    ctx.fillText(ft.text,ft.x,ft.y); ctx.restore();
+  });
+
   // Pause overlay
-  if (gameState === 'PAUSED') {
-    ctx.fillStyle = theme.pauseOverlay;
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = theme.uiText;
-    ctx.font = `bold ${CELL_SIZE * 2}px 'Courier New', monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('PAUSED', size / 2, size / 2);
+  if (gameState==='PAUSED') {
+    ctx.fillStyle=T.pauseOvl; ctx.fillRect(0,0,W,H);
+    ctx.save();
+    ctx.font=`900 34px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=dark?'#60efff':'#0072ff';
+    ctx.shadowColor=dark?'#60efff':'#0072ff'; ctx.shadowBlur=dark?22:8;
+    ctx.fillText('PAUSED',W/2,H/2-14);
+    ctx.shadowBlur=0; ctx.font=`600 11px 'Rajdhani',sans-serif`;
+    ctx.fillStyle=dark?'#7a90b0':'#5a6a7a';
+    ctx.fillText('PRESS SPACE TO RESUME',W/2,H/2+16);
+    ctx.restore();
   }
-};
 
-// ── Main Component ──────────────────────────────────────────────────────────
+  // Countdown
+  if (gameState==='COUNTDOWN') {
+    ctx.fillStyle=T.pauseOvl; ctx.fillRect(0,0,W,H);
+    ctx.save();
+    ctx.font=`900 68px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=dark?'#60efff':'#0072ff';
+    ctx.shadowColor=dark?'#60efff':'#0072ff'; ctx.shadowBlur=dark?35:14;
+    ctx.fillText(countdown>0?String(countdown):'GO!',W/2,H/2);
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
 const SnakeGame: React.FC = () => {
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const theme = isDarkMode ? darkTheme : lightTheme;
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [canvasScale, setCanvasScale] = useState(1);
-
-  const [difficulty, setDifficulty] = useState<Difficulty>('NORMAL');
-  const [snake, setSnake] = useState<Point[]>(INITIAL_SNAKE);
-  const [direction, setDirection] = useState<Direction>(INITIAL_DIRECTION);
-  const pendingDirection = useRef<Direction>(INITIAL_DIRECTION);
-  const [food, setFood] = useState<Point>(() => getRandomFoodPosition(INITIAL_SNAKE));
-  const [score, setScore] = useState(0);
+  // ── Preferences ─────────────────────────────────────────────────────────
+  const [themeKey, setThemeKey]       = useState<ThemeKey>(() => lsGet('sng_theme','light') as ThemeKey);
+  const [skin, setSkin]               = useState<SkinId>(() => lsGet('sng_skin','classic') as SkinId);
+  const [difficulty, setDifficulty]   = useState<Difficulty>(() => lsGet('sng_diff','NORMAL') as Difficulty);
+  const [gameMode, setGameMode]       = useState<GameMode>(() => lsGet('sng_mode','CLASSIC') as GameMode);
+  const [showGrid, setShowGrid]       = useState(() => lsGet('sng_grid','1')==='1');
+  const [haptics, setHaptics]         = useState(() => lsGet('sng_haptic','1')==='1');
   
-  // Track high score per difficulty
-  const [highScore, setHighScore] = useState(() => {
-    try {
-      return parseInt(localStorage.getItem(`snakeHighScore_${difficulty}`) || '0', 10);
-    } catch {
-      return 0;
-    }
+  const T = THEMES[themeKey];
+  const isDark = themeKey === 'dark';
+
+  useEffect(() => { lsSet('sng_theme',themeKey); }, [themeKey]);
+  useEffect(() => { lsSet('sng_skin',skin); }, [skin]);
+  useEffect(() => { lsSet('sng_diff',difficulty); }, [difficulty]);
+  useEffect(() => { lsSet('sng_mode',gameMode); }, [gameMode]);
+  useEffect(() => { lsSet('sng_grid',showGrid?'1':'0'); }, [showGrid]);
+  useEffect(() => { lsSet('sng_haptic',haptics?'1':'0'); }, [haptics]);
+
+  // ── Game state ───────────────────────────────────────────────────────────
+  const INIT_SNAKE: Point[] = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  const [snake, setSnake]             = useState<Point[]>(INIT_SNAKE);
+  const [direction, setDirection]     = useState<Direction>('RIGHT');
+  const pendDir                       = useRef<Direction>('RIGHT');
+  const [food, setFood]               = useState(() => ({ pos:randomCell(INIT_SNAKE), pulse:0 }));
+  const [bonusFood, setBonusFood]     = useState<{pos:Point;ttl:number}|null>(null);
+  const [powerUp, setPowerUp]         = useState<{pos:Point;type:PowerUpType;pulse:number}|null>(null);
+  const [activePower, setActivePower] = useState<{type:PowerUpType;ttl:number}|null>(null);
+  const [gameState, setGameState]     = useState<GameState>('IDLE');
+  const [score, setScore]             = useState(0);
+  const [level, setLevel]             = useState(1);
+  const [countdown, setCountdown]     = useState(3);
+  const [comboStreak, setComboStreak] = useState(0);
+  const [ghostMode, setGhostMode]     = useState(false);
+  const [shieldActive, setShieldActive] = useState(false);
+  const [slowActive, setSlowActive]   = useState(false);
+  const [doubleScore, setDoubleScore] = useState(false);
+  const [totalTime, setTotalTime]     = useState(0);
+  const [foodEaten, setFoodEaten]     = useState(0);
+  const [rainbowHue, setRainbowHue]   = useState(0);
+
+  // ── High scores & achievements ───────────────────────────────────────────
+  const [highScores, setHighScores]   = useState<Record<Difficulty,number>>(() => {
+    try { return JSON.parse(lsGet('sng_hs2','null')) ?? {CHILL:0,NORMAL:0,TURBO:0}; }
+    catch { return {CHILL:0,NORMAL:0,TURBO:0}; }
   });
   
-  const [gameState, setGameState] = useState<GameState>('IDLE');
-  const [level, setLevel] = useState(1);
+  const [savedLevels, setSavedLevels] = useState<Record<GameMode,number>>(() => {
+    try { return JSON.parse(lsGet('sng_saved_levels','null')) ?? {CLASSIC:1,FREE_ROAM:1}; }
+    catch { return {CLASSIC:1,FREE_ROAM:1}; }
+  });
 
-  // Refs for game loop
-  const snakeRef = useRef(snake);
-  const directionRef = useRef(direction);
-  const foodRef = useRef(food);
-  const scoreRef = useRef(score);
-  const gameStateRef = useRef(gameState);
-  const difficultyRef = useRef(difficulty);
-
-  snakeRef.current = snake;
-  directionRef.current = direction;
-  foodRef.current = food;
-  scoreRef.current = score;
-  gameStateRef.current = gameState;
-  difficultyRef.current = difficulty;
-
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Haptic feedback helper
-  const triggerVibration = (pattern: number | number[]) => {
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(pattern);
-    }
-  };
-
-  // Calculate speed dynamically based on score and selected difficulty
-  const getGameSpeed = useCallback((currentScore: number, diff: Difficulty): number => {
-    const settings = SPEED_MAP[diff];
-    return Math.max(
-      settings.min,
-      settings.base - Math.floor(currentScore / 5) * settings.increment
-    );
-  }, []);
-
-  // Handle canvas scaling for true responsiveness
-  useEffect(() => {
-    const updateScale = () => {
-      if (!containerRef.current) return;
-      // Subtracting padding/margins to ensure it fits the card
-      const maxWidth = containerRef.current.clientWidth - 48; 
-      // Ensure we leave room for UI on top and bottom
-      const maxHeight = window.innerHeight - 250; 
-      const scaleFactor = Math.min(maxWidth, maxHeight) / CANVAS_SIZE;
-      setCanvasScale(Math.min(scaleFactor, 1.4)); // Cap max size
-    };
-    updateScale();
-    window.addEventListener('resize', updateScale);
-    return () => window.removeEventListener('resize', updateScale);
-  }, []);
-
-  // Draw canvas whenever game state changes
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    drawGame(ctx, snake, food, theme, isDarkMode, gameState);
-  }, [snake, food, theme, isDarkMode, gameState]);
-
-  // Update high score state when difficulty changes
-  useEffect(() => {
+  const [achievements, setAchievements] = useState<Achievement[]>(() => {
     try {
-      setHighScore(parseInt(localStorage.getItem(`snakeHighScore_${difficulty}`) || '0', 10));
-    } catch {
-      setHighScore(0);
-    }
-  }, [difficulty]);
+      const saved = JSON.parse(lsGet('sng_ach','[]')) as {id:string;ts?:number}[];
+      return ACHIEVEMENT_DEFS.map(d => ({ ...d, unlocked:saved.some(s=>s.id===d.id), ts:saved.find(s=>s.id===d.id)?.ts }));
+    } catch { return ACHIEVEMENT_DEFS.map(d=>({...d,unlocked:false})); }
+  });
+  const [newAch, setNewAch]           = useState<Achievement|null>(null);
+  const achTimerRef                   = useRef<ReturnType<typeof setTimeout>|null>(null);
 
-  // Game logic tick
-  const gameTick = useCallback(() => {
-    if (gameStateRef.current !== 'RUNNING') return;
+  // ── Visual ───────────────────────────────────────────────────────────────
+  const [particles, setParticles]     = useState<Particle[]>([]);
+  const [floats, setFloats]           = useState<FloatingText[]>([]);
+  const floatId                       = useRef(0);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [panel, setPanel]             = useState<null|'settings'|'skins'|'achievements'|'scores'>(null);
 
-    const currentSnake = snakeRef.current;
-    const currentDirection = pendingDirection.current;
-    const head = currentSnake[0];
+  // ── Refs ─────────────────────────────────────────────────────────────────
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const gameAreaRef = useRef<HTMLDivElement>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const animRef     = useRef<number>(0);
+  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const cdRef       = useRef<ReturnType<typeof setInterval>|null>(null);
+  const pulseRef    = useRef(0);
+  const rhRef       = useRef(0);
 
-    let newHead: Point;
-    switch (currentDirection) {
-      case 'UP': newHead = { x: head.x, y: head.y - 1 }; break;
-      case 'DOWN': newHead = { x: head.x, y: head.y + 1 }; break;
-      case 'LEFT': newHead = { x: head.x - 1, y: head.y }; break;
-      case 'RIGHT': newHead = { x: head.x + 1, y: head.y }; break;
-    }
+  // Syncing refs to avoid stale closures in animation frame
+  const R = useRef({
+    snake:INIT_SNAKE, dir:'RIGHT' as Direction, food:{pos:randomCell(INIT_SNAKE),pulse:0},
+    bonus:null as {pos:Point;ttl:number}|null,
+    pu:null as {pos:Point;type:PowerUpType;pulse:number}|null,
+    ap:null as {type:PowerUpType;ttl:number}|null,
+    state:'IDLE' as GameState, score:0, diff:'NORMAL' as Difficulty,
+    ghost:false, shield:false, double:false, slow:false,
+    mode: 'CLASSIC' as GameMode, eaten:0, combo:0, particles:[] as Particle[], floats:[] as FloatingText[],
+    skin: 'classic' as SkinId, themeKey: 'light' as ThemeKey, showGrid: true
+  });
 
-    // Wall collision
-    if (newHead.x < 0 || newHead.x >= GRID_WIDTH || newHead.y < 0 || newHead.y >= GRID_HEIGHT) {
-      triggerVibration([50, 50, 200]); // Death vibration
-      setGameState('OVER');
-      return;
-    }
+  useEffect(() => { R.current.snake  = snake;       }, [snake]);
+  useEffect(() => { R.current.dir    = direction;   }, [direction]);
+  useEffect(() => { R.current.food   = food;        }, [food]);
+  useEffect(() => { R.current.bonus  = bonusFood;   }, [bonusFood]);
+  useEffect(() => { R.current.pu     = powerUp;     }, [powerUp]);
+  useEffect(() => { R.current.ap     = activePower; }, [activePower]);
+  useEffect(() => { R.current.state  = gameState;   }, [gameState]);
+  useEffect(() => { R.current.score  = score;       }, [score]);
+  useEffect(() => { R.current.diff   = difficulty;  }, [difficulty]);
+  useEffect(() => { R.current.ghost  = ghostMode;   }, [ghostMode]);
+  useEffect(() => { R.current.shield = shieldActive;}, [shieldActive]);
+  useEffect(() => { R.current.double = doubleScore; }, [doubleScore]);
+  useEffect(() => { R.current.slow   = slowActive;  }, [slowActive]);
+  useEffect(() => { R.current.mode   = gameMode;    }, [gameMode]);
+  useEffect(() => { R.current.eaten  = foodEaten;   }, [foodEaten]);
+  useEffect(() => { R.current.combo  = comboStreak; }, [comboStreak]);
+  useEffect(() => { R.current.particles = particles;}, [particles]);
+  useEffect(() => { R.current.floats = floats;      }, [floats]);
+  useEffect(() => { R.current.skin   = skin;        }, [skin]);
+  useEffect(() => { R.current.themeKey = themeKey;  }, [themeKey]);
+  useEffect(() => { R.current.showGrid = showGrid;  }, [showGrid]);
 
-    // Self collision (ignore tail as it will move)
-    if (currentSnake.slice(0, -1).some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
-      triggerVibration([50, 50, 200]);
-      setGameState('OVER');
-      return;
-    }
-
-    const hasEaten = newHead.x === foodRef.current.x && newHead.y === foodRef.current.y;
-    let newSnake: Point[];
-    if (hasEaten) {
-      newSnake = [newHead, ...currentSnake];
-      triggerVibration(15); // Short tick for eating
-    } else {
-      newSnake = [newHead, ...currentSnake.slice(0, -1)];
-    }
-
-    if (hasEaten) {
-      const newScore = scoreRef.current + 10;
-      setScore(newScore);
-      scoreRef.current = newScore;
-      setFood(getRandomFoodPosition(newSnake));
-      setLevel(Math.floor(newScore / 50) + 1);
-
-      // We need to fetch the latest high score from state directly
-      setHighScore((prevHigh) => {
-        if (newScore > prevHigh) {
-          try {
-            localStorage.setItem(`snakeHighScore_${difficultyRef.current}`, String(newScore));
-          } catch {}
-          return newScore;
-        }
-        return prevHigh;
-      });
-
-      // Update interval speed
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      intervalRef.current = setInterval(gameTick, getGameSpeed(newScore, difficultyRef.current));
-    }
-
-    setDirection(currentDirection);
-    setSnake(newSnake);
-  }, [getGameSpeed]);
-
-  // Start new game
-  const startGame = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    const newSnake = INITIAL_SNAKE;
-    setSnake(newSnake);
-    setFood(getRandomFoodPosition(newSnake));
-    setDirection(INITIAL_DIRECTION);
-    pendingDirection.current = INITIAL_DIRECTION;
-    setScore(0);
-    setLevel(1);
-    setGameState('RUNNING');
-    intervalRef.current = setInterval(gameTick, SPEED_MAP[difficultyRef.current].base);
-  }, [gameTick]);
-
-  // Pause / Resume
-  const togglePause = useCallback(() => {
-    setGameState(prevState => {
-      if (prevState === 'RUNNING') {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        return 'PAUSED';
-      }
-      if (prevState === 'PAUSED') {
-        intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current, difficultyRef.current));
-        return 'RUNNING';
-      }
-      return prevState;
-    });
-  }, [gameTick, getGameSpeed]);
-
-  // Cleanup interval on unmount
+  // ── Canvas sizing ─────────────────────────────────────────────────────────
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+    const measure = () => {
+      if (!gameAreaRef.current) return;
+      const r = gameAreaRef.current.getBoundingClientRect();
+      setCanvasScale(Math.min((r.width-4)/CS, (r.height-4)/CS, 2.5)); // Increased scale limit
     };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (gameAreaRef.current) ro.observe(gameAreaRef.current);
+    return () => ro.disconnect();
   }, []);
 
-  // Restart interval when gameTick changes (speed updates)
+  // ── Animation & draw loop ─────────────────────────────────────────────────
   useEffect(() => {
-    if (gameStateRef.current === 'RUNNING') {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current, difficultyRef.current));
-    }
-  }, [gameTick, getGameSpeed]);
+    let af: number;
+    const loop = () => {
+      pulseRef.current += 0.08;
+      rhRef.current = (rhRef.current + 1.5) % 360;
+      setRainbowHue(rhRef.current);
+      
+      // Batch simple visual state updates for performance
+      setFood(prev => ({ ...prev, pulse: pulseRef.current }));
+      setPowerUp(prev => prev ? { ...prev, pulse: pulseRef.current } : null);
+      
+      setParticles(prev => prev
+        .map(p => ({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.07,life:p.life-0.024}))
+        .filter(p=>p.life>0)
+      );
+      setFloats(prev => prev.map(f=>({...f,y:f.y-0.85})).filter(f=>f.y>-20));
 
-  // Keyboard controls
-  useEffect(() => {
-    const oppositeDirection: Record<Direction, Direction> = {
-      UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT',
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) drawCanvas(ctx, {
+          snake:R.current.snake, food:R.current.food, bonusFood:R.current.bonus,
+          powerUp:R.current.pu, gameState:R.current.state, theme:THEMES[R.current.themeKey],
+          dark:R.current.themeKey === 'dark', skin:R.current.skin, countdown, particles:R.current.particles,
+          floats:R.current.floats, ghostMode:R.current.ghost,
+          shieldActive:R.current.shield, rainbowHue:rhRef.current, showGrid:R.current.showGrid,
+        });
+      }
+      af = requestAnimationFrame(loop);
     };
-    const keyToDirection: Record<string, Direction> = {
-      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
-      w: 'UP', s: 'DOWN', a: 'LEFT', d: 'RIGHT',
-      W: 'UP', S: 'DOWN', A: 'LEFT', D: 'RIGHT',
-    };
+    af = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(af);
+  }, [countdown]);
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === ' ' || e.key === 'Escape') {
-        e.preventDefault();
-        if (gameStateRef.current === 'RUNNING' || gameStateRef.current === 'PAUSED') {
-          togglePause();
-        }
+  // ── Achievement unlock ────────────────────────────────────────────────────
+  const unlock = useCallback((id:string) => {
+    setAchievements(prev => {
+      if (prev.find(a=>a.id===id)?.unlocked) return prev;
+      const next = prev.map(a => a.id===id ? {...a,unlocked:true,ts:Date.now()} : a);
+      lsSet('sng_ach', JSON.stringify(next.filter(a=>a.unlocked).map(a=>({id:a.id,ts:a.ts}))));
+      const ach = next.find(a=>a.id===id)!;
+      setNewAch(ach);
+      if (achTimerRef.current) clearTimeout(achTimerRef.current);
+      achTimerRef.current = setTimeout(() => setNewAch(null), 3600);
+      return next;
+    });
+  }, []);
+
+  // ── Particles helper ──────────────────────────────────────────────────────
+  const burst = useCallback((x:number,y:number,color:string,n=13) => {
+    setParticles(prev => [...prev.slice(-90), ...Array.from({length:n},() => ({
+      x,y,vx:(Math.random()-0.5)*4.5,vy:(Math.random()-0.5)*4.5-0.8,
+      life:0.8+Math.random()*0.2,color,size:2+Math.random()*3,
+    }))]);
+  }, []);
+
+  const floatAdd = useCallback((x:number,y:number,text:string,color:string) => {
+    const id = ++floatId.current;
+    setFloats(prev => [...prev.slice(-10), {id,x,y,text,color}]);
+  }, []);
+
+  // ── Speed ─────────────────────────────────────────────────────────────────
+  const getSpeed = useCallback((sc:number, diff:Difficulty, slow:boolean):number => {
+    const {base,min,inc} = SPEED[diff];
+    const s = Math.max(min, base - Math.floor(sc/5)*inc);
+    return slow ? Math.round(s*1.65) : s;
+  }, []);
+
+  // ── Tick ──────────────────────────────────────────────────────────────────
+  const comboTimerRef = useRef<ReturnType<typeof setTimeout>|null>(null);
+
+  const tick = useCallback(() => {
+    if (R.current.state !== 'RUNNING') return;
+    const cur=R.current.snake, d=pendDir.current, head=cur[0];
+
+    let nx=head.x, ny=head.y;
+    if (d==='UP')    ny--;
+    if (d==='DOWN')  ny++;
+    if (d==='LEFT')  nx--;
+    if (d==='RIGHT') nx++;
+
+    // Game Mode Collision Logic
+    if (R.current.mode === 'FREE_ROAM') {
+      nx=(nx+COLS)%COLS; ny=(ny+ROWS)%ROWS;
+    } else if (nx<0||nx>=COLS||ny<0||ny>=ROWS) {
+      if (R.current.shield) {
+        setShieldActive(false);
+        nx=Math.max(0,Math.min(COLS-1,nx));
+        ny=Math.max(0,Math.min(ROWS-1,ny));
+        if (haptics) vibrate([40,20,40]);
+        unlock('shield_used');
+      } else {
+        if (haptics) vibrate([60,40,200]);
+        setGameState('OVER');
+        if (timerRef.current) clearInterval(timerRef.current);
         return;
       }
-      const newDirection = keyToDirection[e.key];
-      if (newDirection && newDirection !== oppositeDirection[directionRef.current]) {
-        e.preventDefault();
-        pendingDirection.current = newDirection;
+    }
+
+    const nh = {x:nx,y:ny};
+
+    // Self collision
+    if (!R.current.ghost && cur.slice(0,-1).some(s=>s.x===nx&&s.y===ny)) {
+      if (R.current.shield) {
+        setShieldActive(false);
+        if (haptics) vibrate([40,20,40]);
+        unlock('shield_used');
+      } else {
+        if (haptics) vibrate([60,40,200]);
+        setGameState('OVER');
+        if (timerRef.current) clearInterval(timerRef.current);
+        return;
       }
+    }
+
+    const ateMain  = nh.x===R.current.food.pos.x && nh.y===R.current.food.pos.y;
+    const ateBonus = R.current.bonus && nh.x===R.current.bonus.pos.x && nh.y===R.current.bonus.pos.y;
+    const atePU    = R.current.pu && nh.x===R.current.pu.pos.x && nh.y===R.current.pu.pos.y;
+
+    const newSnake = ateMain||ateBonus ? [nh,...cur] : [nh,...cur.slice(0,-1)];
+
+    if (ateMain) {
+      const newEaten = R.current.eaten + 1;
+      setFoodEaten(newEaten);
+      const newCombo = R.current.combo + 1;
+      setComboStreak(newCombo);
+      if (comboTimerRef.current) clearTimeout(comboTimerRef.current);
+      comboTimerRef.current = setTimeout(() => setComboStreak(0), 2600);
+
+      const pts = ((10 + (newCombo>1?newCombo*2:0)) * (R.current.double?2:1));
+      const newScore = R.current.score + pts;
+      const newLevel = Math.floor(newScore/50)+1;
+      setScore(newScore);
+      setLevel(newLevel);
+
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,THEMES[R.current.themeKey].foodGlow,14);
+      floatAdd(px,py, newCombo>1?`+${pts} ×${newCombo}`:`+${pts}`, R.current.themeKey==='dark'?'#60efff':'#0072ff');
+      if (haptics) vibrate(7);
+
+      setFood({ pos:randomCell(newSnake), pulse:pulseRef.current });
+
+      if (Math.random()<0.22 && !R.current.bonus)
+        setBonusFood({pos:randomCell(newSnake),ttl:130});
+      if (Math.random()<0.13 && !R.current.pu) {
+        const types:PowerUpType[]=['SHIELD','SLOW','DOUBLE','GHOST_MODE'];
+        setPowerUp({pos:randomCell(newSnake),type:types[Math.floor(Math.random()*4)],pulse:pulseRef.current});
+      }
+
+      setHighScores(prev => {
+        const best = prev[R.current.diff]??0;
+        if (newScore>best) {
+          const next={...prev,[R.current.diff]:newScore};
+          lsSet('sng_hs2',JSON.stringify(next)); return next;
+        }
+        return prev;
+      });
+      
+      setSavedLevels(prev => {
+        const bestLevel = prev[R.current.mode]??1;
+        if (newLevel>bestLevel) {
+          const next={...prev,[R.current.mode]:newLevel};
+          lsSet('sng_saved_levels',JSON.stringify(next)); return next;
+        }
+        return prev;
+      });
+
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(tick, getSpeed(newScore,R.current.diff,R.current.slow));
+
+      // Achievements
+      if (newEaten===1) unlock('first_food');
+      if (newScore>=50)  unlock('score_50');
+      if (newScore>=100) unlock('score_100');
+      if (newScore>=250) unlock('score_250');
+      if (newScore>=500) unlock('score_500');
+      if (newSnake.length>=10) unlock('length_10');
+      if (newSnake.length>=20) unlock('length_20');
+      if (newCombo>=5) unlock('combo_5');
+      if (newScore>=100&&R.current.diff==='TURBO') unlock('turbo_100');
+      if (newScore>=250&&R.current.diff==='CHILL') unlock('chill_250');
+    }
+
+    if (ateBonus) {
+      setBonusFood(null);
+      const pts=(doubleScore?50:25);
+      setScore(prev=>{
+        const n=prev+pts;
+        setHighScores(hs=>{
+          const b=hs[R.current.diff]??0;
+          if(n>b){const nx={...hs,[R.current.diff]:n};lsSet('sng_hs2',JSON.stringify(nx));return nx;}
+          return hs;
+        });
+        return n;
+      });
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,'#ff00cc',20);
+      floatAdd(px,py,`+${pts}★`,'#ff00cc');
+      if (haptics) vibrate([8,4,8]);
+      unlock('bonus_food');
+    }
+
+    if (atePU && R.current.pu) {
+      const pt=R.current.pu.type;
+      setPowerUp(null);
+      setActivePower({type:pt,ttl:200});
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,'#ffd200',18);
+      const labs:Record<PowerUpType,string>={SHIELD:'🛡 SHIELD!',SLOW:'🐢 SLOW-MO!',DOUBLE:'×2 DOUBLE!',GHOST_MODE:'👻 GHOST!'};
+      floatAdd(px,py,labs[pt],'#ffd200');
+      if (haptics) vibrate([5,3,5,3,10]);
+      if (pt==='SHIELD')     setShieldActive(true);
+      if (pt==='SLOW')       setSlowActive(true);
+      if (pt==='DOUBLE')     setDoubleScore(true);
+      if (pt==='GHOST_MODE') setGhostMode(true);
+      unlock('power_up');
+    }
+
+    // Decay bonus food
+    if (R.current.bonus) {
+      const ttl = R.current.bonus.ttl - 1;
+      if (ttl<=0) setBonusFood(null);
+      else setBonusFood({...R.current.bonus,ttl});
+    }
+
+    // Decay active power
+    if (R.current.ap) {
+      const ttl = R.current.ap.ttl - 1;
+      if (ttl<=0) {
+        const tp=R.current.ap.type;
+        if (tp==='SHIELD')     setShieldActive(false);
+        if (tp==='SLOW')       { setSlowActive(false); if(intervalRef.current)clearInterval(intervalRef.current); intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,false)); }
+        if (tp==='DOUBLE')     setDoubleScore(false);
+        if (tp==='GHOST_MODE') setGhostMode(false);
+        setActivePower(null);
+      } else setActivePower({...R.current.ap,ttl});
+    }
+
+    setDirection(d);
+    setSnake(newSnake);
+  }, [burst, floatAdd, getSpeed, haptics, unlock]);
+
+  // ── Start / countdown ────────────────────────────────────────────────────
+  const startGame = useCallback(() => {
+    [intervalRef,timerRef,cdRef].forEach(r => { if(r.current){clearInterval(r.current);r.current=null;} });
+
+    setSnake(INIT_SNAKE); setFood({pos:randomCell(INIT_SNAKE),pulse:0});
+    setBonusFood(null); setPowerUp(null); setActivePower(null);
+    setDirection('RIGHT'); pendDir.current='RIGHT';
+    setScore(0); setLevel(1); setFoodEaten(0); setComboStreak(0);
+    setGhostMode(false); setShieldActive(false); setSlowActive(false); setDoubleScore(false);
+    setTotalTime(0); setParticles([]); setFloats([]);
+
+    timerRef.current = setInterval(() => {
+      setTotalTime(p => { if(p>=60) unlock('survive_60'); return p+1; });
+    }, 1000);
+
+    let n=3; setCountdown(n); setGameState('COUNTDOWN');
+    cdRef.current = setInterval(() => {
+      n--; setCountdown(n);
+      if (n<=0) {
+        clearInterval(cdRef.current!);
+        setGameState('RUNNING');
+        intervalRef.current = setInterval(tick, SPEED[R.current.diff].base);
+      }
+    }, 800);
+  }, [tick, unlock]);
+
+  const togglePause = useCallback(() => {
+    setGameState(g => {
+      if (g==='RUNNING') {
+        if(intervalRef.current)clearInterval(intervalRef.current);
+        if(timerRef.current)clearInterval(timerRef.current);
+        return 'PAUSED';
+      }
+      if (g==='PAUSED') {
+        timerRef.current=setInterval(()=>setTotalTime(p=>p+1),1000);
+        intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,R.current.slow));
+        return 'RUNNING';
+      }
+      return g;
+    });
+  }, [tick,getSpeed]);
+
+  useEffect(() => () => {
+    [intervalRef,timerRef,cdRef].forEach(r=>{if(r.current)clearInterval(r.current);});
+    cancelAnimationFrame(animRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (R.current.state==='RUNNING') {
+      if(intervalRef.current)clearInterval(intervalRef.current);
+      intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,R.current.slow));
+    }
+  }, [tick,getSpeed]);
+
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    const km:Record<string,Direction>={
+      ArrowUp:'UP',ArrowDown:'DOWN',ArrowLeft:'LEFT',ArrowRight:'RIGHT',
+      w:'UP',s:'DOWN',a:'LEFT',d:'RIGHT',W:'UP',S:'DOWN',A:'LEFT',D:'RIGHT',
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePause]);
-
-  // Touch swipe controls
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  };
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStartRef.current) return;
-    const deltaX = e.changedTouches[0].clientX - touchStartRef.current.x;
-    const deltaY = e.changedTouches[0].clientY - touchStartRef.current.y;
-    if (Math.abs(deltaX) < 10 && Math.abs(deltaY) < 10) return;
-
-    const opposite: Record<Direction, Direction> = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' };
-    let newDirection: Direction;
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      newDirection = deltaX > 0 ? 'RIGHT' : 'LEFT';
-    } else {
-      newDirection = deltaY > 0 ? 'DOWN' : 'UP';
-    }
-    if (newDirection !== opposite[directionRef.current]) {
-      pendingDirection.current = newDirection;
-    }
-    touchStartRef.current = null;
-  };
-
-  // On-screen D-pad controls
-  const sendDirection = (dir: Direction) => {
-    const opposite: Record<Direction, Direction> = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' };
-    if (dir !== opposite[directionRef.current]) {
-      pendingDirection.current = dir;
-    }
-  };
-
-  const [pressedDir, setPressedDir] = useState<Direction | null>(null);
-  const holdIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const handleDpadStart = (dir: Direction) => {
-    setPressedDir(dir);
-    sendDirection(dir);
-    triggerVibration(5);
-    holdIntervalRef.current = setInterval(() => sendDirection(dir), 100);
-  };
-
-  const handleDpadEnd = () => {
-    setPressedDir(null);
-    if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
-  };
-
-  // ── Styles ──────────────────────────────────────────────────────────────
-  // We inject global styles here to remove body margins and prevent scrolling
-  const globalStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600&display=swap');
-    
-    html, body, #root {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden; /* Prevents bounce/scroll on mobile */
-    }
-
-    .snake-card {
-      background: ${theme.uiBg};
-      backdrop-filter: blur(20px);
-      border-radius: 24px;
-      border: 1.5px solid ${theme.border};
-      padding: 24px;
-      max-width: 520px;
-      width: 100%;
-      box-shadow: ${isDarkMode ? '0 0 60px rgba(0, 255, 135, 0.08), 0 20px 60px rgba(0, 0, 0, 0.6)' : '0 20px 60px rgba(0, 114, 255, 0.12), 0 4px 24px rgba(0, 0, 0, 0.07)'};
-      display: flex;
-      flex-direction: column;
-      box-sizing: border-box;
-      transition: all 0.3s ease;
-    }
-
-    /* Make it truly edge-to-edge on mobile */
-    @media (max-width: 600px) {
-      .snake-card {
-        max-width: 100%;
-        height: 100%;
-        border-radius: 0;
-        border: none;
-        padding: 16px;
-        justify-content: space-around;
+    const h = (e:KeyboardEvent) => {
+      if ([' ','Escape','p','P'].includes(e.key)) {
+        e.preventDefault();
+        if (R.current.state==='RUNNING'||R.current.state==='PAUSED') togglePause();
+        return;
       }
-    }
-  `;
+      if (e.key==='Enter' && (R.current.state==='IDLE'||R.current.state==='OVER')) { startGame(); return; }
+      const nd=km[e.key];
+      if (nd&&nd!==opp[R.current.dir]) { e.preventDefault(); pendDir.current=nd; }
+    };
+    window.addEventListener('keydown',h);
+    return ()=>window.removeEventListener('keydown',h);
+  }, [togglePause,startGame]);
 
-  const styles = {
-    wrapper: {
-      position: 'fixed' as const,
-      inset: 0, // Shorthand for top:0, right:0, bottom:0, left:0
-      background: isDarkMode
-        ? 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)'
-        : 'linear-gradient(135deg, #e0f7fa, #f5f5f5, #ffffff)',
-      display: 'flex',
-      flexDirection: 'column' as const,
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: "'Rajdhani', sans-serif",
-      transition: 'background 0.5s',
-    },
-    title: {
-      fontFamily: "'Orbitron', monospace",
-      fontSize: 'clamp(20px, 5vw, 28px)',
-      fontWeight: 900,
-      letterSpacing: '0.15em',
-      color: theme.uiAccent,
-      margin: '0 0 4px 0',
-      textShadow: isDarkMode ? `0 0 20px ${theme.uiAccent}88` : 'none',
-    },
-    scoreRow: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: '8px',
-      marginBottom: '16px',
-      flexWrap: 'wrap' as const,
-    },
-    scoreBox: {
-      background: theme.scoreBg,
-      border: `1px solid ${theme.border}`,
-      borderRadius: '12px',
-      padding: '8px 16px',
-      flex: 1,
-      textAlign: 'center' as const,
-      minWidth: '70px',
-    },
-    scoreLabel: {
-      fontSize: '10px',
-      fontWeight: 600,
-      letterSpacing: '0.12em',
-      color: theme.uiSubtext,
-      textTransform: 'uppercase' as const,
-      display: 'block' as const,
-    },
-    scoreValue: {
-      fontFamily: "'Orbitron', monospace",
-      fontSize: 'clamp(16px, 4vw, 20px)',
-      fontWeight: 700,
-      color: theme.uiText,
-      display: 'block' as const,
-    },
-    canvasContainer: {
-      position: 'relative' as const,
-      width: CANVAS_SIZE * canvasScale,
-      height: CANVAS_SIZE * canvasScale,
-      margin: '0 auto 16px',
-      borderRadius: '16px',
-      overflow: 'hidden' as const,
-      boxShadow: isDarkMode
-        ? `0 0 0 2px ${theme.border}, 0 0 40px rgba(0, 255, 135, 0.15)`
-        : `0 0 0 2px ${theme.border}, 0 8px 32px rgba(0, 114, 255, 0.1)`,
-      cursor: 'pointer',
-      flexShrink: 0,
-    },
-    buttonBase: {
-      border: 'none',
-      borderRadius: '12px',
-      fontFamily: "'Orbitron', monospace",
-      fontWeight: 700,
-      letterSpacing: '0.08em',
-      cursor: 'pointer',
-      transition: 'all 0.2s',
-      fontSize: '13px',
-    },
-    primaryButton: {
-      background: theme.buttonBg,
-      color: theme.buttonText,
-      padding: '12px 28px',
-      boxShadow: isDarkMode ? `0 0 20px ${theme.snakeBody1}55` : '0 4px 16px rgba(0, 114, 255, 0.25)',
-    },
-    secondaryButton: {
-      background: 'transparent',
-      color: theme.uiAccent,
-      border: `1.5px solid ${theme.uiAccent}`,
-      padding: '10px 20px',
-    },
-    difficultyButton: (active: boolean) => ({
-      background: active ? theme.uiAccent : 'transparent',
-      color: active ? theme.buttonText : theme.uiSubtext,
-      border: `1px solid ${active ? theme.uiAccent : theme.border}`,
-      padding: '4px 10px',
-      borderRadius: '8px',
-      fontSize: '11px',
-      fontWeight: 700,
-      cursor: 'pointer',
-      transition: 'all 0.2s',
-      fontFamily: "'Orbitron', monospace",
-    }),
-    modalOverlay: {
-      position: 'absolute' as const,
-      inset: 0,
-      background: isDarkMode ? 'rgba(15, 12, 41, 0.92)' : 'rgba(224, 247, 250, 0.95)',
-      display: 'flex',
-      flexDirection: 'column' as const,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '12px',
-      borderRadius: '16px',
-      backdropFilter: 'blur(8px)',
-    },
-    dpad: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3, 52px)',
-      gridTemplateRows: 'repeat(3, 52px)',
-      gap: '6px',
-      margin: '0 auto',
-      width: 'fit-content',
-      userSelect: 'none' as const,
-    },
-    dpadButton: (active: boolean) => ({
-      width: 52,
-      height: 52,
-      borderRadius: '12px',
-      border: `1.5px solid ${theme.uiAccent}55`,
-      background: active ? `${theme.uiAccent}22` : theme.scoreBg,
-      color: theme.uiAccent,
-      fontSize: '20px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: 'pointer',
-      transition: 'all 0.1s',
-      WebkitTapHighlightColor: 'transparent',
-    }),
+  // ── Swipe ────────────────────────────────────────────────────────────────
+  const tsRef = useRef<{x:number;y:number}|null>(null);
+  const onTouchStart = (e:React.TouchEvent) => { tsRef.current={x:e.touches[0].clientX,y:e.touches[0].clientY}; };
+  const onTouchEnd = (e:React.TouchEvent) => {
+    if (!tsRef.current) return;
+    const dx=e.changedTouches[0].clientX-tsRef.current.x, dy=e.changedTouches[0].clientY-tsRef.current.y;
+    if (Math.abs(dx)<12&&Math.abs(dy)<12) return;
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    const nd:Direction=Math.abs(dx)>Math.abs(dy)?(dx>0?'RIGHT':'LEFT'):(dy>0?'DOWN':'UP');
+    if(nd!==opp[R.current.dir]) pendDir.current=nd;
+    tsRef.current=null;
   };
 
+  // ── D-pad ────────────────────────────────────────────────────────────────
+  const [pressedDir, setPressedDir] = useState<Direction|null>(null);
+  const holdRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const dStart = (d:Direction) => {
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    setPressedDir(d);
+    if(d!==opp[R.current.dir]) pendDir.current=d;
+    if(haptics) vibrate(4);
+    holdRef.current=setInterval(()=>{if(d!==opp[R.current.dir])pendDir.current=d;},100);
+  };
+  const dEnd = () => { setPressedDir(null); if(holdRef.current)clearInterval(holdRef.current); };
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const highScore   = highScores[difficulty] ?? 0;
+  const isRunning   = gameState==='RUNNING';
+  const isOver      = gameState==='OVER';
+  const isIdle      = gameState==='IDLE';
+  const isPaused    = gameState==='PAUSED';
+  const isCounting  = gameState==='COUNTDOWN';
+  const isExpanded  = !isIdle; // Triggers full-screen UI expansion
+  
+  const speedLabel  = useMemo(() => {
+    const {base,inc}=SPEED[difficulty];
+    return Math.round((base-getSpeed(score,difficulty,slowActive))/inc+1);
+  }, [score,difficulty,slowActive,getSpeed]);
+  const unlockedCnt = achievements.filter(a=>a.unlocked).length;
+
+  // ── Inline styles ─────────────────────────────────────────────────────────
+  const btnPri: React.CSSProperties = {
+    background:T.btnPri, color:T.btnPriTxt, border:'none',
+    borderRadius:'10px', fontFamily:"'Orbitron',monospace", fontWeight:700,
+    fontSize:'12px', letterSpacing:'0.08em', padding:'10px 22px',
+    cursor:'pointer', boxShadow:isDark?`0 0 18px ${T.uiAccent2}44`:'0 4px 14px rgba(0,114,255,0.22)',
+    transition:'all 0.18s',
+  };
+  const btnSec: React.CSSProperties = {
+    background:T.btnSec, color:T.btnSecTxt, border:`1.5px solid ${T.btnSecBdr}`,
+    borderRadius:'10px', fontFamily:"'Orbitron',monospace", fontWeight:700,
+    fontSize:'12px', letterSpacing:'0.08em', padding:'9px 16px',
+    cursor:'pointer', transition:'all 0.18s',
+  };
+  const scoreBox: React.CSSProperties = {
+    background:T.scoreBg, border:`1px solid ${T.border}`,
+    borderRadius:'10px', padding:'5px 8px', textAlign:'center',
+  };
+  const iconBtn: React.CSSProperties = {
+    background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'9px',
+    color:T.uiSub, cursor:'pointer', padding:'6px 8px', fontSize:'14px',
+    lineHeight:'1', display:'flex', alignItems:'center', gap:'3px', transition:'all 0.15s',
+  };
+
+  // ── Panel renderer ────────────────────────────────────────────────────────
+  const PanelShell = ({ children }: { children: React.ReactNode }) => (
+    <div style={{
+      position:'fixed', inset:0, zIndex:100,
+      background:isDark?'rgba(6,6,20,0.97)':'rgba(245,249,255,0.97)',
+      display:'flex', flexDirection:'column', alignItems:'center',
+      padding:'20px 16px', overflowY:'auto', gap:'10px',
+      backdropFilter:'blur(14px)',
+    }}>{children}</div>
+  );
+
+  const panelTitle = (txt:string) => (
+    <h2 style={{ fontFamily:"'Orbitron',monospace", color:T.uiAccent, margin:0, letterSpacing:'0.1em', fontSize:'clamp(16px,4vw,22px)' }}>{txt}</h2>
+  );
+
+  // Dpad button
+  const DBtn = ({ d, lbl }:{d:Direction;lbl:string}) => (
+    <div
+      style={{
+        width:44, height:44, borderRadius:'10px',
+        background:pressedDir===d?`${T.uiAccent}28`:T.scoreBg,
+        border:`1.5px solid ${pressedDir===d?T.uiAccent:T.border}`,
+        color:pressedDir===d?T.uiAccent:T.uiSub, fontSize:'16px',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        cursor:'pointer', transition:'all 0.08s', userSelect:'none',
+        WebkitTapHighlightColor:'transparent',
+        boxShadow:pressedDir===d&&isDark?`0 0 12px ${T.uiAccent}55`:'none',
+      }}
+      onMouseDown={()=>dStart(d)} onMouseUp={dEnd} onMouseLeave={dEnd}
+      onTouchStart={e=>{e.preventDefault();dStart(d);}} onTouchEnd={dEnd}
+    >{lbl}</div>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <style>{globalStyles}</style>
-      <div style={styles.wrapper}>
-        <div className="snake-card">
-          
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <div>
-              <h1 style={styles.title}>SNAKE</h1>
-              <p style={{ margin: 0, fontSize: '11px', color: theme.uiSubtext, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                Level {level}
-              </p>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+        html,body,#root{width:100%;height:100%;overflow:hidden;}
+        button{outline:none;-webkit-tap-highlight-color:transparent;}
+        button:active{transform:scale(0.92);}
+        @keyframes achSlide{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+        @keyframes pulseGlow{0%,100%{opacity:0.8;}50%{opacity:1;}}
+        ::-webkit-scrollbar{width:4px;}
+        ::-webkit-scrollbar-thumb{background:${T.border};border-radius:4px;}
+      `}</style>
+
+      {/* ROOT */}
+      <div style={{
+        position:'fixed', inset:0,
+        background:isDark
+          ? `linear-gradient(135deg,${T.bg[0]},${T.bg[1]},${T.bg[2]})`
+          : `linear-gradient(135deg,${T.bg[0]},${T.bg[1]},${T.bg[2]})`,
+        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+        fontFamily:"'Rajdhani',sans-serif", overflow:'hidden', transition:'background 0.5s',
+      }}>
+        {/* Dynamic Wrapper: Expands to full screen when playing */}
+        <div style={{
+          display:'flex', flexDirection:'column', width:'100%', height:'100%',
+          maxWidth: isExpanded ? '100%' : '560px', 
+          padding: isExpanded ? '12px 16px' : '8px 10px', 
+          gap:'5px', alignItems:'stretch',
+          transition: 'max-width 0.4s cubic-bezier(0.16, 1, 0.3, 1), padding 0.4s ease'
+        }}>
+
+          {/* ── TOP BAR ─────────────────────────────────────────────── */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'6px', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'baseline', gap:'7px' }}>
+              <h1 style={{
+                fontFamily:"'Orbitron',monospace", fontWeight:900,
+                fontSize:'clamp(17px,4vw,26px)', color:T.uiAccent,
+                letterSpacing:'0.18em', textShadow:isDark?`0 0 22px ${T.uiAccent}99`:'none',
+              }}>SNAKE</h1>
+              <span style={{
+                fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700,
+                color:T.uiAccent2, background:`${T.uiAccent2}18`,
+                border:`1px solid ${T.uiAccent2}44`, borderRadius:'5px', padding:'2px 6px',
+              }}>LV{level}</span>
+              {gameMode === 'FREE_ROAM' && (
+                <span style={{ fontSize:'11px', color:T.uiAccent2, fontWeight:700,
+                  background:`${T.uiAccent2}14`, border:`1px solid ${T.uiAccent2}33`,
+                  borderRadius:'5px', padding:'2px 5px' }}>🌀WRAP</span>
+              )}
             </div>
-            <button
-              style={{ ...styles.buttonBase, ...styles.secondaryButton, padding: '8px 14px', fontSize: '18px' }}
-              onClick={() => setIsDarkMode(prev => !prev)}
-            >
-              {isDarkMode ? '☀️' : '🌙'}
-            </button>
+            <div style={{ display:'flex', gap:'4px' }}>
+              {[
+                { icon:'🎨', tip:'Skins',        p:'skins'        as const },
+                { icon:'🏆', tip:'Achievements', p:'achievements' as const },
+                { icon:'📊', tip:'Scores',       p:'scores'       as const },
+                { icon:'⚙️', tip:'Settings',     p:'settings'     as const },
+              ].map(btn => (
+                <button key={btn.p} style={iconBtn} title={btn.tip} onClick={()=>setPanel(btn.p)}>
+                  {btn.icon}
+                  {btn.p==='achievements' && <span style={{ fontSize:'9px', color:T.uiAccent }}>{unlockedCnt}</span>}
+                </button>
+              ))}
+              <button style={{ ...iconBtn, color:isDark?'#ffd200':T.uiSub }}
+                onClick={()=>setThemeKey(k=>k==='dark'?'light':'dark')}>
+                {isDark?'☀️':'🌙'}
+              </button>
+            </div>
           </div>
 
-          {/* Difficulty Selection (Hidden while running) */}
-          {gameState === 'IDLE' && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
-              {(['CHILL', 'NORMAL', 'TURBO'] as Difficulty[]).map((diff) => (
-                <button
-                  key={diff}
-                  style={styles.difficultyButton(difficulty === diff)}
-                  onClick={() => setDifficulty(diff)}
-                >
-                  {diff}
+          {/* ── SCORE ROW ───────────────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'5px', flexShrink:0 }}>
+            {[
+              { l:'Score',  v:score,        accent:false },
+              { l:'Best',   v:highScore,    accent:true  },
+              { l:'Speed',  v:`${speedLabel}x`,  accent:false },
+              { l:'Length', v:snake.length, accent:false },
+            ].map(it => (
+              <div key={it.l} style={scoreBox}>
+                <span style={{ display:'block', fontSize:'9px', fontWeight:700, letterSpacing:'0.12em', color:T.uiSub, textTransform:'uppercase' }}>{it.l}</span>
+                <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'clamp(13px,3vw,17px)', fontWeight:700, color:it.accent?T.uiAccent:T.uiText, lineHeight:'1.15' }}>{it.v}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* ── GAME AREA ────────────────────────────────────────────── */}
+          <div ref={gameAreaRef} style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', minHeight:0, position:'relative' }}>
+            <div style={{
+              position:'relative', width:CS*canvasScale, height:CS*canvasScale,
+              borderRadius:'14px', overflow:'hidden',
+              boxShadow:isDark
+                ? `0 0 0 1.5px ${T.border},0 0 45px ${T.uiAccent2}1a,0 16px 50px rgba(0,0,0,0.75)`
+                : `0 0 0 1.5px ${T.border},0 12px 44px rgba(0,114,255,0.11)`,
+            }}
+              onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+            >
+              <canvas ref={canvasRef} width={CS} height={CS}
+                style={{ display:'block', width:CS*canvasScale, height:CS*canvasScale }} />
+
+              {/* IDLE overlay with Dual Game Mode Selection */}
+              {isIdle && (
+                <div style={{
+                  position:'absolute', inset:0, background:T.modalBg,
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  gap:'12px', borderRadius:'14px', backdropFilter:'blur(12px)', padding:'20px',
+                  animation:'fadeUp 0.3s ease',
+                }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,7vw,44px)', fontWeight:900, color:T.uiAccent, letterSpacing:'0.15em', textShadow:isDark?`0 0 28px ${T.uiAccent}`:'' }}>
+                    SNAKE
+                  </div>
+                  
+                  {/* Game Mode Selection */}
+                  <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '300px' }}>
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'CLASSIC' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'CLASSIC' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'CLASSIC' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('CLASSIC')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🧱</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>CLASSIC</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Borders are fatal</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['CLASSIC']}</span>
+                    </button>
+                    
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'FREE_ROAM' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'FREE_ROAM' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'FREE_ROAM' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('FREE_ROAM')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🌀</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>FREE ROAM</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Wrap around borders</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['FREE_ROAM']}</span>
+                    </button>
+                  </div>
+
+                  <p style={{ color:T.uiSub, fontSize:'11px', textAlign:'center', letterSpacing:'0.04em', maxWidth:'220px', lineHeight:'1.5', margin: '4px 0' }}>
+                    Arrow / WASD to steer · SPACE to pause
+                  </p>
+                  
+                  <button style={{ ...btnPri, fontSize:'14px', padding:'14px 44px', textTransform:'uppercase', letterSpacing:'0.15em', boxShadow: `0 8px 24px ${T.uiAccent}55` }} onClick={startGame}>
+                    START GAME
+                  </button>
+                </div>
+              )}
+
+              {/* GAME OVER overlay */}
+              {isOver && (
+                <div style={{
+                  position:'absolute', inset:0, background:T.modalBg,
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  gap:'9px', borderRadius:'14px', backdropFilter:'blur(14px)', padding:'20px',
+                  animation:'fadeUp 0.35s ease',
+                }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(18px,5vw,28px)', fontWeight:900, color:T.food1, letterSpacing:'0.1em', textShadow:isDark?`0 0 22px ${T.food1}`:'' }}>
+                    GAME OVER
+                  </div>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,6vw,44px)', fontWeight:900, color:T.uiText, lineHeight:1 }}>
+                    {score}<span style={{ fontSize:'14px', color:T.uiSub, marginLeft:'3px' }}>pts</span>
+                  </div>
+                  {score>=highScore&&score>0 && (
+                    <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'11px', color:T.uiAccent, letterSpacing:'0.08em', animation:'pulseGlow 1s infinite' }}>
+                      🏆 NEW {difficulty} RECORD!
+                    </div>
+                  )}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'5px', width:'100%', maxWidth:220 }}>
+                    {[['TIME',`${totalTime}s`],['LENGTH',snake.length],['LEVEL',level],['EATEN',foodEaten]].map(([l,v]) => (
+                      <div key={l} style={{ ...scoreBox, padding:'7px' }}>
+                        <span style={{ display:'block', fontSize:'9px', fontWeight:700, color:T.uiSub, letterSpacing:'0.1em', textTransform:'uppercase' }}>{l}</span>
+                        <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'15px', fontWeight:700, color:T.uiText }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', gap:'7px', marginTop:'4px' }}>
+                    <button style={{ ...btnPri, padding:'11px 26px' }} onClick={startGame}>↺ PLAY AGAIN</button>
+                    <button style={{ ...btnSec, padding:'10px 14px' }} onClick={()=>setGameState('IDLE')}>MENU</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── ACTIVE POWER-UPS ──────────────────────────────────────── */}
+          <div style={{ display:'flex', gap:'5px', justifyContent:'center', flexShrink:0, minHeight:26, flexWrap:'wrap' }}>
+            {activePower && (() => {
+              const info:Record<PowerUpType,{icon:string;label:string;color:string}> = {
+                SHIELD:     {icon:'🛡',label:'SHIELD',  color:'#ffd200'},
+                SLOW:       {icon:'🐢',label:'SLOW-MO', color:'#00c6ff'},
+                DOUBLE:     {icon:'×2',label:'DOUBLE',  color:'#00ff87'},
+                GHOST_MODE: {icon:'👻',label:'GHOST',   color:'#cc88ff'},
+              };
+              const nfo=info[activePower.type], pct=activePower.ttl/200;
+              return (
+                <div style={{
+                  background:`${nfo.color}18`, border:`1px solid ${nfo.color}55`,
+                  borderRadius:'8px', padding:'3px 10px',
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:'2px',
+                  fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:nfo.color,
+                }}>
+                  <span>{nfo.icon} {nfo.label}</span>
+                  <div style={{ width:70, height:3, background:`${nfo.color}28`, borderRadius:2 }}>
+                    <div style={{ width:`${pct*100}%`, height:'100%', background:nfo.color, borderRadius:2, transition:'width 0.1s' }}/>
+                  </div>
+                </div>
+              );
+            })()}
+            {comboStreak>1 && (
+              <div style={{
+                background:'rgba(255,106,0,0.15)', border:'1px solid rgba(255,106,0,0.5)',
+                borderRadius:'8px', padding:'3px 10px',
+                fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:'#ff6a00',
+                animation:'pulseGlow 0.8s infinite',
+              }}>🔥 ×{comboStreak} COMBO</div>
+            )}
+          </div>
+
+          {/* ── CONTROLS ROW ──────────────────────────────────────────── */}
+          <div style={{ display:'flex', justifyContent:'center', gap:'6px', flexShrink:0 }}>
+            {(isRunning||isPaused||isCounting) ? (
+              <>
+                <button style={btnPri} onClick={togglePause}>{isPaused?'▶ RESUME':'⏸ PAUSE'}</button>
+                <button style={btnSec} onClick={startGame}>↺ RESTART</button>
+                <button style={{...btnSec, border: 'none', background: 'transparent'}} onClick={() => setGameState('IDLE')}>✕ EXIT</button>
+              </>
+            ) : isOver ? (
+              <></> // Buttons moved into Game Over modal for cleaner UI
+            ) : (
+              <></> // Start buttons are inside IDLE modal
+            )}
+          </div>
+
+          {/* ── D-PAD ─────────────────────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,44px)', gridTemplateRows:'repeat(3,44px)', gap:'4px', margin:'0 auto', flexShrink:0 }}>
+            <div/><DBtn d="UP"  lbl="▲"/><div/>
+            <DBtn d="LEFT" lbl="◀"/>
+            <div style={{ width:44,height:44,borderRadius:'10px',background:T.scoreBg,border:`1px solid ${T.border}`,opacity:0.3,display:'flex',alignItems:'center',justifyContent:'center',color:T.uiSub,fontSize:'16px' }}>●</div>
+            <DBtn d="RIGHT" lbl="▶"/>
+            <div/><DBtn d="DOWN"  lbl="▼"/><div/>
+          </div>
+
+          <p style={{ textAlign:'center', color:T.uiSub, fontSize:'9px', letterSpacing:'0.07em', flexShrink:0 }}>
+            ↑↓←→ · WASD · SPACE=pause · ENTER=start
+          </p>
+        </div>
+
+        {/* ── PANELS ──────────────────────────────────────────────────── */}
+        {panel==='settings' && (
+          <PanelShell>
+            {panelTitle('SETTINGS')}
+            <div style={{ width:'100%', maxWidth:380, display:'flex', flexDirection:'column', gap:'9px' }}>
+              {[
+                { label:'SHOW GRID',           val:showGrid, fn:setShowGrid },
+                { label:'HAPTIC FEEDBACK',     val:haptics,  fn:setHaptics  },
+              ].map(o => (
+                <div key={o.label} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                  <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', letterSpacing:'0.05em' }}>{o.label}</span>
+                  <button style={{
+                    background:o.val?T.btnPri:'transparent', border:`1.5px solid ${o.val?'transparent':T.btnSecBdr}`,
+                    borderRadius:'20px', width:46, height:24, cursor:'pointer', position:'relative', transition:'all 0.2s',
+                  }} onClick={()=>o.fn((v:boolean)=>!v)}>
+                    <div style={{ position:'absolute', top:2, left:o.val?22:2, width:20, height:20, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.3)' }}/>
+                  </button>
+                </div>
+              ))}
+              <div style={{ background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', display:'block', marginBottom:'8px', letterSpacing:'0.05em' }}>DIFFICULTY</span>
+                <div style={{ display:'flex', gap:'5px' }}>
+                  {DIFFS.map(d=>(
+                    <button key={d} style={{ ...btnSec, flex:1, background:difficulty===d?T.btnPri:'transparent', color:difficulty===d?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${difficulty===d?'transparent':T.btnSecBdr}` }}
+                      onClick={()=>setDifficulty(d)}>{d}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', display:'block', marginBottom:'8px', letterSpacing:'0.05em' }}>THEME</span>
+                <div style={{ display:'flex', gap:'5px' }}>
+                  {(['light','dark'] as ThemeKey[]).map(k=>(
+                    <button key={k} style={{ ...btnSec, flex:1, background:themeKey===k?T.btnPri:'transparent', color:themeKey===k?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${themeKey===k?'transparent':T.btnSecBdr}` }}
+                      onClick={()=>setThemeKey(k)}>{k==='dark'?'🌙 DARK':'☀️ LIGHT'}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
+          </PanelShell>
+        )}
+
+        {panel==='skins' && (
+          <PanelShell>
+            {panelTitle('SKINS')}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'7px', width:'100%', maxWidth:380 }}>
+              {(Object.entries(SKIN_DEFS) as [SkinId,typeof SKIN_DEFS[SkinId]][]).map(([id,def]) => (
+                <button key={id} style={{
+                  background:skin===id?`${T.uiAccent}20`:T.scoreBg,
+                  border:`1.5px solid ${skin===id?T.uiAccent:T.border}`,
+                  borderRadius:'12px', padding:'12px 8px', cursor:'pointer',
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', transition:'all 0.15s',
+                }} onClick={()=>setSkin(id)}>
+                  <span style={{ fontSize:'24px' }}>{def.icon}</span>
+                  <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:skin===id?T.uiAccent:T.uiText, letterSpacing:'0.05em' }}>{def.name}</span>
+                  <div style={{ display:'flex', gap:'3px' }}>
+                    {[def.head[0],def.body[0],def.body[1]].map((c,i) => (
+                      <div key={i} style={{ width:9,height:9,borderRadius:'50%',background:c }}/>
+                    ))}
+                  </div>
+                  {skin===id && <span style={{ fontSize:'12px' }}>✓</span>}
                 </button>
               ))}
             </div>
-          )}
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
+          </PanelShell>
+        )}
 
-          {/* Score Row */}
-          <div style={styles.scoreRow}>
-            <div style={styles.scoreBox}>
-              <span style={styles.scoreLabel}>Score</span>
-              <span style={styles.scoreValue}>{score}</span>
+        {panel==='achievements' && (
+          <PanelShell>
+            {panelTitle('ACHIEVEMENTS')}
+            <p style={{ color:T.uiSub, fontSize:'12px', margin:0 }}>{unlockedCnt} / {achievements.length} unlocked</p>
+            <div style={{ width:'100%', maxWidth:420, display:'flex', flexDirection:'column', gap:'6px' }}>
+              {achievements.map(a => (
+                <div key={a.id} style={{
+                  background:a.unlocked?T.scoreBg:(isDark?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.025)'),
+                  border:`1px solid ${a.unlocked?T.uiAccent+'44':T.border}`,
+                  borderRadius:'11px', padding:'10px 13px',
+                  display:'flex', alignItems:'center', gap:'10px', opacity:a.unlocked?1:0.42,
+                }}>
+                  <span style={{ fontSize:'20px', minWidth:26 }}>{a.icon}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:700, fontSize:'12px', color:T.uiText, fontFamily:"'Orbitron',monospace", letterSpacing:'0.04em' }}>{a.label}</div>
+                    <div style={{ fontSize:'11px', color:T.uiSub }}>{a.desc}</div>
+                  </div>
+                  {a.unlocked && <span style={{ color:T.uiAccent, fontSize:'14px' }}>✓</span>}
+                </div>
+              ))}
             </div>
-            <div style={styles.scoreBox}>
-              <span style={styles.scoreLabel}>Best ({difficulty.charAt(0)})</span>
-              <span style={{ ...styles.scoreValue, color: theme.uiAccent }}>{highScore}</span>
-            </div>
-            <div style={styles.scoreBox}>
-              <span style={styles.scoreLabel}>Speed</span>
-              <span style={styles.scoreValue}>
-                {Math.round((SPEED_MAP[difficulty].base - getGameSpeed(score, difficulty)) / SPEED_MAP[difficulty].increment + 1)}x
-              </span>
-            </div>
-          </div>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
+          </PanelShell>
+        )}
 
-          {/* Canvas Wrapper */}
-          <div
-            style={styles.canvasContainer}
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-          >
-            <canvas
-              ref={canvasRef}
-              width={CANVAS_SIZE}
-              height={CANVAS_SIZE}
-              style={{ display: 'block', width: CANVAS_SIZE * canvasScale, height: CANVAS_SIZE * canvasScale }}
-            />
-            
-            {gameState === 'IDLE' && (
-              <div style={styles.modalOverlay}>
-                <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(22px, 5vw, 32px)', fontWeight: 900, color: theme.uiAccent, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.uiAccent}` : 'none' }}>
-                  READY?
-                </p>
-                <p style={{ color: theme.uiSubtext, fontSize: '12px', margin: 0, letterSpacing: '0.05em' }}>Mode: {difficulty}</p>
-                <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '12px' }} onClick={startGame}>
-                  ▶ START GAME
-                </button>
+        {panel==='scores' && (
+          <PanelShell>
+            {panelTitle('HIGH SCORES')}
+            <div style={{ width:'100%', maxWidth:340, display:'flex', flexDirection:'column', gap:'7px' }}>
+              {DIFFS.map((d,i) => (
+                <div key={d} style={{ ...scoreBox, display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 18px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                    <span style={{ fontSize:'22px' }}>{i===0?'🧊':i===1?'🎯':'🚀'}</span>
+                    <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'13px', fontWeight:700, color:T.uiText }}>{d}</span>
+                  </div>
+                  <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'22px', fontWeight:900, color:T.uiAccent }}>{highScores[d]??0}</span>
+                </div>
+              ))}
+              <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>TOTAL FOOD EATEN</div>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'24px', fontWeight:900, color:T.uiAccent }}>{foodEaten}</div>
               </div>
-            )}
-            
-            {gameState === 'OVER' && (
-              <div style={styles.modalOverlay}>
-                <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(18px, 4vw, 26px)', fontWeight: 900, color: theme.food1, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.food1}` : 'none' }}>
-                  GAME OVER
-                </p>
-                <p style={{ color: theme.uiText, fontSize: '28px', fontFamily: "'Orbitron', monospace", fontWeight: 700, margin: '4px 0' }}>
-                  {score} <span style={{ fontSize: '14px', color: theme.uiSubtext }}>pts</span>
-                </p>
-                {score >= highScore && score > 0 && (
-                  <p style={{ color: theme.uiAccent, fontSize: '13px', fontWeight: 600, margin: 0, letterSpacing: '0.08em' }}>
-                    🏆 NEW {difficulty} RECORD!
-                  </p>
-                )}
-                <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '8px' }} onClick={startGame}>
-                  ↺ PLAY AGAIN
-                </button>
+              <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>ACHIEVEMENTS</div>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'22px', fontWeight:900, color:T.uiAccent2 }}>{unlockedCnt}/{achievements.length}</div>
               </div>
-            )}
-          </div>
+            </div>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
+          </PanelShell>
+        )}
 
-          {/* Controls */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
-            {gameState === 'IDLE' ? (
-              <></> // Button is already in modal
-            ) : gameState === 'OVER' ? (
-              <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={startGame}>
-                ↺ Restart
-              </button>
-            ) : (
-              <>
-                <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={togglePause}>
-                  {gameState === 'PAUSED' ? '▶ Resume' : '⏸ Pause'}
-                </button>
-                <button style={{ ...styles.buttonBase, ...styles.secondaryButton }} onClick={startGame}>
-                  ↺ Restart
-                </button>
-              </>
-            )}
+        {/* ── ACHIEVEMENT TOAST ────────────────────────────────────────── */}
+        {newAch && (
+          <div style={{
+            position:'fixed', bottom:20, right:14, zIndex:200,
+            background:isDark?'rgba(10,8,28,0.97)':'rgba(255,255,255,0.97)',
+            border:`1.5px solid ${T.uiAccent}`,
+            borderRadius:'14px', padding:'11px 15px',
+            display:'flex', alignItems:'center', gap:'10px',
+            boxShadow:`0 8px 28px rgba(0,0,0,0.28)`,
+            animation:'achSlide 0.4s ease',
+            backdropFilter:'blur(12px)', maxWidth:'255px',
+          }}>
+            <span style={{ fontSize:'26px' }}>{newAch.icon}</span>
+            <div>
+              <div style={{ fontSize:'8px', letterSpacing:'0.12em', color:T.uiAccent, fontWeight:700, fontFamily:"'Orbitron',monospace" }}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{ fontSize:'12px', fontWeight:700, color:T.uiText, fontFamily:"'Orbitron',monospace" }}>{newAch.label}</div>
+              <div style={{ fontSize:'10px', color:T.uiSub }}>{newAch.desc}</div>
+            </div>
           </div>
-
-          {/* D-Pad */}
-          <div style={styles.dpad}>
-            <div />
-            <div
-              style={styles.dpadButton(pressedDir === 'UP')}
-              onMouseDown={() => handleDpadStart('UP')}
-              onMouseUp={handleDpadEnd}
-              onMouseLeave={handleDpadEnd}
-              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('UP'); }}
-              onTouchEnd={handleDpadEnd}
-            >▲</div>
-            <div />
-            <div
-              style={styles.dpadButton(pressedDir === 'LEFT')}
-              onMouseDown={() => handleDpadStart('LEFT')}
-              onMouseUp={handleDpadEnd}
-              onMouseLeave={handleDpadEnd}
-              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('LEFT'); }}
-              onTouchEnd={handleDpadEnd}
-            >◀</div>
-            <div style={{ ...styles.dpadButton(false), opacity: 0.5 }}>●</div>
-            <div
-              style={styles.dpadButton(pressedDir === 'RIGHT')}
-              onMouseDown={() => handleDpadStart('RIGHT')}
-              onMouseUp={handleDpadEnd}
-              onMouseLeave={handleDpadEnd}
-              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('RIGHT'); }}
-              onTouchEnd={handleDpadEnd}
-            >▶</div>
-            <div />
-            <div
-              style={styles.dpadButton(pressedDir === 'DOWN')}
-              onMouseDown={() => handleDpadStart('DOWN')}
-              onMouseUp={handleDpadEnd}
-              onMouseLeave={handleDpadEnd}
-              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('DOWN'); }}
-              onTouchEnd={handleDpadEnd}
-            >▼</div>
-            <div />
-          </div>
-        </div>
+        )}
       </div>
     </>
   );
