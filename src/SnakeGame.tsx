@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-// Types
+// ── Types ──────────────────────────────────────────────────────────────────
 type Point = { x: number; y: number };
 type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 type GameState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER';
+type Difficulty = 'CHILL' | 'NORMAL' | 'TURBO';
 
-// Constants
+// ── Constants ──────────────────────────────────────────────────────────────
 const CELL_SIZE = 20;
 const GRID_WIDTH = 20;
 const GRID_HEIGHT = 20;
 const CANVAS_SIZE = CELL_SIZE * GRID_WIDTH; // 400px
 
-const BASE_SPEED_MS = 150;
-const SPEED_INCREMENT_MS = 5;
-const MIN_SPEED_MS = 60;
+const SPEED_MAP: Record<Difficulty, { base: number; min: number; increment: number }> = {
+  CHILL: { base: 200, min: 100, increment: 3 },
+  NORMAL: { base: 140, min: 60, increment: 5 },
+  TURBO: { base: 80, min: 30, increment: 6 },
+};
 
 const INITIAL_SNAKE: Point[] = [
   { x: 10, y: 10 },
@@ -22,19 +25,18 @@ const INITIAL_SNAKE: Point[] = [
 ];
 const INITIAL_DIRECTION: Direction = 'RIGHT';
 
-// Helper: Generate random food position avoiding snake
-const getRandomFoodPosition = (snake: Point[]): Point => {
+function getRandomFoodPosition(snake: Point[]): Point {
   let position: Point;
   do {
     position = {
       x: Math.floor(Math.random() * GRID_WIDTH),
       y: Math.floor(Math.random() * GRID_HEIGHT),
     };
-  } while (snake.some(segment => segment.x === position.x && segment.y === position.y));
+  } while (snake.some((segment) => segment.x === position.x && segment.y === position.y));
   return position;
-};
+}
 
-// Theme definitions
+// ── Theme definitions ──────────────────────────────────────────────────────
 const lightTheme = {
   bg1: '#e0f7fa',
   bg2: '#ffffff',
@@ -79,7 +81,7 @@ const darkTheme = {
 
 type Theme = typeof lightTheme;
 
-// Drawing utilities
+// ── Drawing utilities ──────────────────────────────────────────────────────
 const drawRoundedRect = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -222,12 +224,7 @@ const drawGame = (
   }
 };
 
-// Calculate game speed based on score
-const getGameSpeed = (score: number): number => {
-  return Math.max(MIN_SPEED_MS, BASE_SPEED_MS - Math.floor(score / 5) * SPEED_INCREMENT_MS);
-};
-
-// Main Component
+// ── Main Component ──────────────────────────────────────────────────────────
 const SnakeGame: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const theme = isDarkMode ? darkTheme : lightTheme;
@@ -236,18 +233,22 @@ const SnakeGame: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasScale, setCanvasScale] = useState(1);
 
+  const [difficulty, setDifficulty] = useState<Difficulty>('NORMAL');
   const [snake, setSnake] = useState<Point[]>(INITIAL_SNAKE);
   const [direction, setDirection] = useState<Direction>(INITIAL_DIRECTION);
   const pendingDirection = useRef<Direction>(INITIAL_DIRECTION);
   const [food, setFood] = useState<Point>(() => getRandomFoodPosition(INITIAL_SNAKE));
   const [score, setScore] = useState(0);
+  
+  // Track high score per difficulty
   const [highScore, setHighScore] = useState(() => {
     try {
-      return parseInt(localStorage.getItem('snakeHighScore') || '0', 10);
+      return parseInt(localStorage.getItem(`snakeHighScore_${difficulty}`) || '0', 10);
     } catch {
       return 0;
     }
   });
+  
   const [gameState, setGameState] = useState<GameState>('IDLE');
   const [level, setLevel] = useState(1);
 
@@ -257,23 +258,43 @@ const SnakeGame: React.FC = () => {
   const foodRef = useRef(food);
   const scoreRef = useRef(score);
   const gameStateRef = useRef(gameState);
+  const difficultyRef = useRef(difficulty);
 
   snakeRef.current = snake;
   directionRef.current = direction;
   foodRef.current = food;
   scoreRef.current = score;
   gameStateRef.current = gameState;
+  difficultyRef.current = difficulty;
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Handle canvas scaling for responsiveness
+  // Haptic feedback helper
+  const triggerVibration = (pattern: number | number[]) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(pattern);
+    }
+  };
+
+  // Calculate speed dynamically based on score and selected difficulty
+  const getGameSpeed = useCallback((currentScore: number, diff: Difficulty): number => {
+    const settings = SPEED_MAP[diff];
+    return Math.max(
+      settings.min,
+      settings.base - Math.floor(currentScore / 5) * settings.increment
+    );
+  }, []);
+
+  // Handle canvas scaling for true responsiveness
   useEffect(() => {
     const updateScale = () => {
       if (!containerRef.current) return;
-      const maxWidth = containerRef.current.clientWidth - 32;
-      const maxHeight = window.innerHeight * 0.55;
+      // Subtracting padding/margins to ensure it fits the card
+      const maxWidth = containerRef.current.clientWidth - 48; 
+      // Ensure we leave room for UI on top and bottom
+      const maxHeight = window.innerHeight - 250; 
       const scaleFactor = Math.min(maxWidth, maxHeight) / CANVAS_SIZE;
-      setCanvasScale(Math.min(scaleFactor, 1.4));
+      setCanvasScale(Math.min(scaleFactor, 1.4)); // Cap max size
     };
     updateScale();
     window.addEventListener('resize', updateScale);
@@ -288,6 +309,15 @@ const SnakeGame: React.FC = () => {
     if (!ctx) return;
     drawGame(ctx, snake, food, theme, isDarkMode, gameState);
   }, [snake, food, theme, isDarkMode, gameState]);
+
+  // Update high score state when difficulty changes
+  useEffect(() => {
+    try {
+      setHighScore(parseInt(localStorage.getItem(`snakeHighScore_${difficulty}`) || '0', 10));
+    } catch {
+      setHighScore(0);
+    }
+  }, [difficulty]);
 
   // Game logic tick
   const gameTick = useCallback(() => {
@@ -307,12 +337,14 @@ const SnakeGame: React.FC = () => {
 
     // Wall collision
     if (newHead.x < 0 || newHead.x >= GRID_WIDTH || newHead.y < 0 || newHead.y >= GRID_HEIGHT) {
+      triggerVibration([50, 50, 200]); // Death vibration
       setGameState('OVER');
       return;
     }
 
     // Self collision (ignore tail as it will move)
     if (currentSnake.slice(0, -1).some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
+      triggerVibration([50, 50, 200]);
       setGameState('OVER');
       return;
     }
@@ -321,6 +353,7 @@ const SnakeGame: React.FC = () => {
     let newSnake: Point[];
     if (hasEaten) {
       newSnake = [newHead, ...currentSnake];
+      triggerVibration(15); // Short tick for eating
     } else {
       newSnake = [newHead, ...currentSnake.slice(0, -1)];
     }
@@ -332,23 +365,27 @@ const SnakeGame: React.FC = () => {
       setFood(getRandomFoodPosition(newSnake));
       setLevel(Math.floor(newScore / 50) + 1);
 
-      if (newScore > highScore) {
-        setHighScore(newScore);
-        try {
-          localStorage.setItem('snakeHighScore', String(newScore));
-        } catch {}
-      }
+      // We need to fetch the latest high score from state directly
+      setHighScore((prevHigh) => {
+        if (newScore > prevHigh) {
+          try {
+            localStorage.setItem(`snakeHighScore_${difficultyRef.current}`, String(newScore));
+          } catch {}
+          return newScore;
+        }
+        return prevHigh;
+      });
 
       // Update interval speed
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
-      intervalRef.current = setInterval(gameTick, getGameSpeed(newScore));
+      intervalRef.current = setInterval(gameTick, getGameSpeed(newScore, difficultyRef.current));
     }
 
     setDirection(currentDirection);
     setSnake(newSnake);
-  }, [highScore]);
+  }, [getGameSpeed]);
 
   // Start new game
   const startGame = useCallback(() => {
@@ -361,7 +398,7 @@ const SnakeGame: React.FC = () => {
     setScore(0);
     setLevel(1);
     setGameState('RUNNING');
-    intervalRef.current = setInterval(gameTick, BASE_SPEED_MS);
+    intervalRef.current = setInterval(gameTick, SPEED_MAP[difficultyRef.current].base);
   }, [gameTick]);
 
   // Pause / Resume
@@ -372,12 +409,12 @@ const SnakeGame: React.FC = () => {
         return 'PAUSED';
       }
       if (prevState === 'PAUSED') {
-        intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current));
+        intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current, difficultyRef.current));
         return 'RUNNING';
       }
       return prevState;
     });
-  }, [gameTick]);
+  }, [gameTick, getGameSpeed]);
 
   // Cleanup interval on unmount
   useEffect(() => {
@@ -390,9 +427,9 @@ const SnakeGame: React.FC = () => {
   useEffect(() => {
     if (gameStateRef.current === 'RUNNING') {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current));
+      intervalRef.current = setInterval(gameTick, getGameSpeed(scoreRef.current, difficultyRef.current));
     }
-  }, [gameTick]);
+  }, [gameTick, getGameSpeed]);
 
   // Keyboard controls
   useEffect(() => {
@@ -462,6 +499,7 @@ const SnakeGame: React.FC = () => {
   const handleDpadStart = (dir: Direction) => {
     setPressedDir(dir);
     sendDirection(dir);
+    triggerVibration(5);
     holdIntervalRef.current = setInterval(() => sendDirection(dir), 100);
   };
 
@@ -470,10 +508,51 @@ const SnakeGame: React.FC = () => {
     if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
   };
 
-  // Styles
+  // ── Styles ──────────────────────────────────────────────────────────────
+  // We inject global styles here to remove body margins and prevent scrolling
+  const globalStyles = `
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600&display=swap');
+    
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden; /* Prevents bounce/scroll on mobile */
+    }
+
+    .snake-card {
+      background: ${theme.uiBg};
+      backdrop-filter: blur(20px);
+      border-radius: 24px;
+      border: 1.5px solid ${theme.border};
+      padding: 24px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: ${isDarkMode ? '0 0 60px rgba(0, 255, 135, 0.08), 0 20px 60px rgba(0, 0, 0, 0.6)' : '0 20px 60px rgba(0, 114, 255, 0.12), 0 4px 24px rgba(0, 0, 0, 0.07)'};
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      transition: all 0.3s ease;
+    }
+
+    /* Make it truly edge-to-edge on mobile */
+    @media (max-width: 600px) {
+      .snake-card {
+        max-width: 100%;
+        height: 100%;
+        border-radius: 0;
+        border: none;
+        padding: 16px;
+        justify-content: space-around;
+      }
+    }
+  `;
+
   const styles = {
     wrapper: {
-      minHeight: '100vh',
+      position: 'fixed' as const,
+      inset: 0, // Shorthand for top:0, right:0, bottom:0, left:0
       background: isDarkMode
         ? 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)'
         : 'linear-gradient(135deg, #e0f7fa, #f5f5f5, #ffffff)',
@@ -483,20 +562,6 @@ const SnakeGame: React.FC = () => {
       justifyContent: 'center',
       fontFamily: "'Rajdhani', sans-serif",
       transition: 'background 0.5s',
-      padding: '16px',
-      boxSizing: 'border-box' as const,
-    },
-    card: {
-      background: theme.uiBg,
-      backdropFilter: 'blur(20px)',
-      borderRadius: '24px',
-      border: `1.5px solid ${theme.border}`,
-      padding: '24px',
-      maxWidth: '520px',
-      width: '100%',
-      boxShadow: isDarkMode
-        ? '0 0 60px rgba(0, 255, 135, 0.08), 0 20px 60px rgba(0, 0, 0, 0.6)'
-        : '0 20px 60px rgba(0, 114, 255, 0.12), 0 4px 24px rgba(0, 0, 0, 0.07)',
     },
     title: {
       fontFamily: "'Orbitron', monospace",
@@ -504,7 +569,6 @@ const SnakeGame: React.FC = () => {
       fontWeight: 900,
       letterSpacing: '0.15em',
       color: theme.uiAccent,
-      textAlign: 'center' as const,
       margin: '0 0 4px 0',
       textShadow: isDarkMode ? `0 0 20px ${theme.uiAccent}88` : 'none',
     },
@@ -523,7 +587,7 @@ const SnakeGame: React.FC = () => {
       padding: '8px 16px',
       flex: 1,
       textAlign: 'center' as const,
-      minWidth: '80px',
+      minWidth: '70px',
     },
     scoreLabel: {
       fontSize: '10px',
@@ -535,7 +599,7 @@ const SnakeGame: React.FC = () => {
     },
     scoreValue: {
       fontFamily: "'Orbitron', monospace",
-      fontSize: 'clamp(16px, 4vw, 22px)',
+      fontSize: 'clamp(16px, 4vw, 20px)',
       fontWeight: 700,
       color: theme.uiText,
       display: 'block' as const,
@@ -551,6 +615,7 @@ const SnakeGame: React.FC = () => {
         ? `0 0 0 2px ${theme.border}, 0 0 40px rgba(0, 255, 135, 0.15)`
         : `0 0 0 2px ${theme.border}, 0 8px 32px rgba(0, 114, 255, 0.1)`,
       cursor: 'pointer',
+      flexShrink: 0,
     },
     buttonBase: {
       border: 'none',
@@ -574,6 +639,18 @@ const SnakeGame: React.FC = () => {
       border: `1.5px solid ${theme.uiAccent}`,
       padding: '10px 20px',
     },
+    difficultyButton: (active: boolean) => ({
+      background: active ? theme.uiAccent : 'transparent',
+      color: active ? theme.buttonText : theme.uiSubtext,
+      border: `1px solid ${active ? theme.uiAccent : theme.border}`,
+      padding: '4px 10px',
+      borderRadius: '8px',
+      fontSize: '11px',
+      fontWeight: 700,
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+      fontFamily: "'Orbitron', monospace",
+    }),
     modalOverlay: {
       position: 'absolute' as const,
       inset: 0,
@@ -613,154 +690,168 @@ const SnakeGame: React.FC = () => {
   };
 
   return (
-    <div style={styles.wrapper}>
-      <div style={styles.card} ref={containerRef}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <div>
-            <h1 style={styles.title}>SNAKE</h1>
-            <p style={{ margin: 0, fontSize: '11px', color: theme.uiSubtext, letterSpacing: '0.1em', textTransform: 'uppercase', textAlign: 'center' }}>
-              Level {level}
-            </p>
+    <>
+      <style>{globalStyles}</style>
+      <div style={styles.wrapper}>
+        <div className="snake-card">
+          
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div>
+              <h1 style={styles.title}>SNAKE</h1>
+              <p style={{ margin: 0, fontSize: '11px', color: theme.uiSubtext, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                Level {level}
+              </p>
+            </div>
+            <button
+              style={{ ...styles.buttonBase, ...styles.secondaryButton, padding: '8px 14px', fontSize: '18px' }}
+              onClick={() => setIsDarkMode(prev => !prev)}
+            >
+              {isDarkMode ? '☀️' : '🌙'}
+            </button>
           </div>
-          <button
-            style={{ ...styles.secondaryButton, padding: '8px 14px', fontSize: '18px' }}
-            onClick={() => setIsDarkMode(prev => !prev)}
-          >
-            {isDarkMode ? '☀️' : '🌙'}
-          </button>
-        </div>
 
-        <div style={styles.scoreRow}>
-          <div style={styles.scoreBox}>
-            <span style={styles.scoreLabel}>Score</span>
-            <span style={styles.scoreValue}>{score}</span>
-          </div>
-          <div style={styles.scoreBox}>
-            <span style={styles.scoreLabel}>Best</span>
-            <span style={{ ...styles.scoreValue, color: theme.uiAccent }}>{highScore}</span>
-          </div>
-          <div style={styles.scoreBox}>
-            <span style={styles.scoreLabel}>Speed</span>
-            <span style={styles.scoreValue}>{Math.round((BASE_SPEED_MS - getGameSpeed(score)) / SPEED_INCREMENT_MS + 1)}x</span>
-          </div>
-        </div>
-
-        <div
-          style={styles.canvasContainer}
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-        >
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{ display: 'block', width: CANVAS_SIZE * canvasScale, height: CANVAS_SIZE * canvasScale }}
-          />
+          {/* Difficulty Selection (Hidden while running) */}
           {gameState === 'IDLE' && (
-            <div style={styles.modalOverlay}>
-              <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(22px, 5vw, 32px)', fontWeight: 900, color: theme.uiAccent, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.uiAccent}` : 'none' }}>
-                SNAKE
-              </p>
-              <p style={{ color: theme.uiSubtext, fontSize: '13px', margin: 0, letterSpacing: '0.05em' }}>Use arrow keys or D-Pad to play</p>
-              <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '8px' }} onClick={startGame}>
-                ▶ START GAME
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '16px' }}>
+              {(['CHILL', 'NORMAL', 'TURBO'] as Difficulty[]).map((diff) => (
+                <button
+                  key={diff}
+                  style={styles.difficultyButton(difficulty === diff)}
+                  onClick={() => setDifficulty(diff)}
+                >
+                  {diff}
+                </button>
+              ))}
             </div>
           )}
-          {gameState === 'OVER' && (
-            <div style={styles.modalOverlay}>
-              <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(18px, 4vw, 26px)', fontWeight: 900, color: theme.food1, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.food1}` : 'none' }}>
-                GAME OVER
-              </p>
-              <p style={{ color: theme.uiText, fontSize: '28px', fontFamily: "'Orbitron', monospace", fontWeight: 700, margin: '4px 0' }}>
-                {score} <span style={{ fontSize: '14px', color: theme.uiSubtext }}>pts</span>
-              </p>
-              {score >= highScore && score > 0 && (
-                <p style={{ color: theme.uiAccent, fontSize: '13px', fontWeight: 600, margin: 0, letterSpacing: '0.08em' }}>
-                  🏆 NEW HIGH SCORE!
-                </p>
-              )}
-              <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '8px' }} onClick={startGame}>
-                ↺ PLAY AGAIN
-              </button>
-            </div>
-          )}
-        </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
-          {gameState === 'IDLE' ? (
-            <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={startGame}>
-              ▶ Start
-            </button>
-          ) : gameState === 'OVER' ? (
-            <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={startGame}>
-              ↺ Restart
-            </button>
-          ) : (
-            <>
-              <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={togglePause}>
-                {gameState === 'PAUSED' ? '▶ Resume' : '⏸ Pause'}
-              </button>
-              <button style={{ ...styles.buttonBase, ...styles.secondaryButton }} onClick={startGame}>
+          {/* Score Row */}
+          <div style={styles.scoreRow}>
+            <div style={styles.scoreBox}>
+              <span style={styles.scoreLabel}>Score</span>
+              <span style={styles.scoreValue}>{score}</span>
+            </div>
+            <div style={styles.scoreBox}>
+              <span style={styles.scoreLabel}>Best ({difficulty.charAt(0)})</span>
+              <span style={{ ...styles.scoreValue, color: theme.uiAccent }}>{highScore}</span>
+            </div>
+            <div style={styles.scoreBox}>
+              <span style={styles.scoreLabel}>Speed</span>
+              <span style={styles.scoreValue}>
+                {Math.round((SPEED_MAP[difficulty].base - getGameSpeed(score, difficulty)) / SPEED_MAP[difficulty].increment + 1)}x
+              </span>
+            </div>
+          </div>
+
+          {/* Canvas Wrapper */}
+          <div
+            style={styles.canvasContainer}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+          >
+            <canvas
+              ref={canvasRef}
+              width={CANVAS_SIZE}
+              height={CANVAS_SIZE}
+              style={{ display: 'block', width: CANVAS_SIZE * canvasScale, height: CANVAS_SIZE * canvasScale }}
+            />
+            
+            {gameState === 'IDLE' && (
+              <div style={styles.modalOverlay}>
+                <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(22px, 5vw, 32px)', fontWeight: 900, color: theme.uiAccent, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.uiAccent}` : 'none' }}>
+                  READY?
+                </p>
+                <p style={{ color: theme.uiSubtext, fontSize: '12px', margin: 0, letterSpacing: '0.05em' }}>Mode: {difficulty}</p>
+                <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '12px' }} onClick={startGame}>
+                  ▶ START GAME
+                </button>
+              </div>
+            )}
+            
+            {gameState === 'OVER' && (
+              <div style={styles.modalOverlay}>
+                <p style={{ fontFamily: "'Orbitron', monospace", fontSize: 'clamp(18px, 4vw, 26px)', fontWeight: 900, color: theme.food1, margin: 0, textShadow: isDarkMode ? `0 0 20px ${theme.food1}` : 'none' }}>
+                  GAME OVER
+                </p>
+                <p style={{ color: theme.uiText, fontSize: '28px', fontFamily: "'Orbitron', monospace", fontWeight: 700, margin: '4px 0' }}>
+                  {score} <span style={{ fontSize: '14px', color: theme.uiSubtext }}>pts</span>
+                </p>
+                {score >= highScore && score > 0 && (
+                  <p style={{ color: theme.uiAccent, fontSize: '13px', fontWeight: 600, margin: 0, letterSpacing: '0.08em' }}>
+                    🏆 NEW {difficulty} RECORD!
+                  </p>
+                )}
+                <button style={{ ...styles.buttonBase, ...styles.primaryButton, marginTop: '8px' }} onClick={startGame}>
+                  ↺ PLAY AGAIN
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            {gameState === 'IDLE' ? (
+              <></> // Button is already in modal
+            ) : gameState === 'OVER' ? (
+              <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={startGame}>
                 ↺ Restart
               </button>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <button style={{ ...styles.buttonBase, ...styles.primaryButton }} onClick={togglePause}>
+                  {gameState === 'PAUSED' ? '▶ Resume' : '⏸ Pause'}
+                </button>
+                <button style={{ ...styles.buttonBase, ...styles.secondaryButton }} onClick={startGame}>
+                  ↺ Restart
+                </button>
+              </>
+            )}
+          </div>
 
-        <div style={styles.dpad}>
-          <div />
-          <div
-            style={styles.dpadButton(pressedDir === 'UP')}
-            onMouseDown={() => handleDpadStart('UP')}
-            onMouseUp={handleDpadEnd}
-            onMouseLeave={handleDpadEnd}
-            onTouchStart={(e) => { e.preventDefault(); handleDpadStart('UP'); }}
-            onTouchEnd={handleDpadEnd}
-          >
-            ▲
+          {/* D-Pad */}
+          <div style={styles.dpad}>
+            <div />
+            <div
+              style={styles.dpadButton(pressedDir === 'UP')}
+              onMouseDown={() => handleDpadStart('UP')}
+              onMouseUp={handleDpadEnd}
+              onMouseLeave={handleDpadEnd}
+              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('UP'); }}
+              onTouchEnd={handleDpadEnd}
+            >▲</div>
+            <div />
+            <div
+              style={styles.dpadButton(pressedDir === 'LEFT')}
+              onMouseDown={() => handleDpadStart('LEFT')}
+              onMouseUp={handleDpadEnd}
+              onMouseLeave={handleDpadEnd}
+              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('LEFT'); }}
+              onTouchEnd={handleDpadEnd}
+            >◀</div>
+            <div style={{ ...styles.dpadButton(false), opacity: 0.5 }}>●</div>
+            <div
+              style={styles.dpadButton(pressedDir === 'RIGHT')}
+              onMouseDown={() => handleDpadStart('RIGHT')}
+              onMouseUp={handleDpadEnd}
+              onMouseLeave={handleDpadEnd}
+              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('RIGHT'); }}
+              onTouchEnd={handleDpadEnd}
+            >▶</div>
+            <div />
+            <div
+              style={styles.dpadButton(pressedDir === 'DOWN')}
+              onMouseDown={() => handleDpadStart('DOWN')}
+              onMouseUp={handleDpadEnd}
+              onMouseLeave={handleDpadEnd}
+              onTouchStart={(e) => { e.preventDefault(); handleDpadStart('DOWN'); }}
+              onTouchEnd={handleDpadEnd}
+            >▼</div>
+            <div />
           </div>
-          <div />
-          <div
-            style={styles.dpadButton(pressedDir === 'LEFT')}
-            onMouseDown={() => handleDpadStart('LEFT')}
-            onMouseUp={handleDpadEnd}
-            onMouseLeave={handleDpadEnd}
-            onTouchStart={(e) => { e.preventDefault(); handleDpadStart('LEFT'); }}
-            onTouchEnd={handleDpadEnd}
-          >
-            ◀
-          </div>
-          <div style={{ ...styles.dpadButton(false), opacity: 0.5 }}>●</div>
-          <div
-            style={styles.dpadButton(pressedDir === 'RIGHT')}
-            onMouseDown={() => handleDpadStart('RIGHT')}
-            onMouseUp={handleDpadEnd}
-            onMouseLeave={handleDpadEnd}
-            onTouchStart={(e) => { e.preventDefault(); handleDpadStart('RIGHT'); }}
-            onTouchEnd={handleDpadEnd}
-          >
-            ▶
-          </div>
-          <div />
-          <div
-            style={styles.dpadButton(pressedDir === 'DOWN')}
-            onMouseDown={() => handleDpadStart('DOWN')}
-            onMouseUp={handleDpadEnd}
-            onMouseLeave={handleDpadEnd}
-            onTouchStart={(e) => { e.preventDefault(); handleDpadStart('DOWN'); }}
-            onTouchEnd={handleDpadEnd}
-          >
-            ▼
-          </div>
-          <div />
         </div>
-
-        <p style={{ textAlign: 'center', color: theme.uiSubtext, fontSize: '11px', letterSpacing: '0.08em', marginTop: '12px', marginBottom: 0 }}>
-          SPACE / ESC to pause · WASD or ↑↓←→ to move
-        </p>
       </div>
-    </div>
+    </>
   );
 };
 
