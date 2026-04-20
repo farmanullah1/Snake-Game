@@ -8,10 +8,10 @@ import React, {
 type Point        = { x: number; y: number };
 type Direction    = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 type GameState    = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER' | 'COUNTDOWN';
+type GameMode     = 'CLASSIC' | 'FREE_ROAM';
 type Difficulty   = 'CHILL' | 'NORMAL' | 'TURBO';
 type PowerUpType  = 'SHIELD' | 'SLOW' | 'DOUBLE' | 'GHOST_MODE';
 type SkinId       = 'classic' | 'neon' | 'fire' | 'ice' | 'gold' | 'rainbow';
-type GameMode     = 'CLASSIC' | 'FREE_ROAM';
 type Achievement  = { id: string; label: string; icon: string; desc: string; unlocked: boolean; ts?: number; };
 type FloatingText = { id: number; x: number; y: number; text: string; color: string; };
 type Particle     = { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number; };
@@ -328,10 +328,9 @@ const SnakeGame: React.FC = () => {
   const [themeKey, setThemeKey]       = useState<ThemeKey>(() => lsGet('sng_theme','light') as ThemeKey);
   const [skin, setSkin]               = useState<SkinId>(() => lsGet('sng_skin','classic') as SkinId);
   const [difficulty, setDifficulty]   = useState<Difficulty>(() => lsGet('sng_diff','NORMAL') as Difficulty);
+  const [gameMode, setGameMode]       = useState<GameMode>(() => lsGet('sng_mode','CLASSIC') as GameMode);
   const [showGrid, setShowGrid]       = useState(() => lsGet('sng_grid','1')==='1');
   const [haptics, setHaptics]         = useState(() => lsGet('sng_haptic','1')==='1');
-  const [selectedMode, setSelectedMode] = useState<GameMode | null>(null);
-  const [enlarged, setEnlarged]       = useState(false);
   
   const T = THEMES[themeKey];
   const isDark = themeKey === 'dark';
@@ -339,16 +338,9 @@ const SnakeGame: React.FC = () => {
   useEffect(() => { lsSet('sng_theme',themeKey); }, [themeKey]);
   useEffect(() => { lsSet('sng_skin',skin); }, [skin]);
   useEffect(() => { lsSet('sng_diff',difficulty); }, [difficulty]);
+  useEffect(() => { lsSet('sng_mode',gameMode); }, [gameMode]);
   useEffect(() => { lsSet('sng_grid',showGrid?'1':'0'); }, [showGrid]);
   useEffect(() => { lsSet('sng_haptic',haptics?'1':'0'); }, [haptics]);
-
-  // ── Wrap mode high level (saved in localStorage) ────────────────────────
-  const [wrapHighLevel, setWrapHighLevel] = useState<number>(() => {
-    try { return parseInt(lsGet('sng_wrap_level','1')) || 1; } catch { return 1; }
-  });
-  const [classicHighLevel, setClassicHighLevel] = useState<number>(() => {
-    try { return parseInt(lsGet('sng_classic_level','1')) || 1; } catch { return 1; }
-  });
 
   // ── Game state ───────────────────────────────────────────────────────────
   const INIT_SNAKE: Point[] = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
@@ -370,23 +362,16 @@ const SnakeGame: React.FC = () => {
   const [doubleScore, setDoubleScore] = useState(false);
   const [totalTime, setTotalTime]     = useState(0);
   const [foodEaten, setFoodEaten]     = useState(0);
-  const [rainbowHue, setRainbowHue]   = useState(0);
-
-  // Update levels
-  useEffect(() => {
-    if (selectedMode === 'FREE_ROAM' && level > wrapHighLevel) {
-      setWrapHighLevel(level);
-      lsSet('sng_wrap_level', level.toString());
-    } else if (selectedMode === 'CLASSIC' && level > classicHighLevel) {
-      setClassicHighLevel(level);
-      lsSet('sng_classic_level', level.toString());
-    }
-  }, [level, selectedMode, wrapHighLevel, classicHighLevel]);
 
   // ── High scores & achievements ───────────────────────────────────────────
   const [highScores, setHighScores]   = useState<Record<Difficulty,number>>(() => {
     try { return JSON.parse(lsGet('sng_hs2','null')) ?? {CHILL:0,NORMAL:0,TURBO:0}; }
     catch { return {CHILL:0,NORMAL:0,TURBO:0}; }
+  });
+  
+  const [savedLevels, setSavedLevels] = useState<Record<GameMode,number>>(() => {
+    try { return JSON.parse(lsGet('sng_saved_levels','null')) ?? {CLASSIC:1,FREE_ROAM:1}; }
+    catch { return {CLASSIC:1,FREE_ROAM:1}; }
   });
 
   const [achievements, setAchievements] = useState<Achievement[]>(() => {
@@ -415,16 +400,14 @@ const SnakeGame: React.FC = () => {
   const pulseRef    = useRef(0);
   const rhRef       = useRef(0);
 
-  // Syncing refs to avoid stale closures in animation frame
+  // Syncing refs guarantees no stale closures in the animation frame
   const R = useRef({
     snake:INIT_SNAKE, dir:'RIGHT' as Direction, food:{pos:randomCell(INIT_SNAKE),pulse:0},
-    bonus:null as {pos:Point;ttl:number}|null,
-    pu:null as {pos:Point;type:PowerUpType;pulse:number}|null,
-    ap:null as {type:PowerUpType;ttl:number}|null,
-    state:'IDLE' as GameState, score:0, diff:'NORMAL' as Difficulty,
-    ghost:false, shield:false, double:false, slow:false,
-    mode: 'CLASSIC' as GameMode, eaten:0, combo:0, particles:[] as Particle[], floats:[] as FloatingText[],
-    skin: 'classic' as SkinId, themeKey: 'light' as ThemeKey, showGrid: true
+    bonus:null as {pos:Point;ttl:number}|null, pu:null as {pos:Point;type:PowerUpType;pulse:number}|null,
+    ap:null as {type:PowerUpType;ttl:number}|null, state:'IDLE' as GameState, score:0, diff:'NORMAL' as Difficulty,
+    ghost:false, shield:false, double:false, slow:false, mode: 'CLASSIC' as GameMode, eaten:0, combo:0,
+    particles:[] as Particle[], floats:[] as FloatingText[], skin: 'classic' as SkinId, themeKey: 'light' as ThemeKey,
+    showGrid: true, countdown: 3
   });
 
   useEffect(() => { R.current.snake  = snake;       }, [snake]);
@@ -440,7 +423,7 @@ const SnakeGame: React.FC = () => {
   useEffect(() => { R.current.shield = shieldActive;}, [shieldActive]);
   useEffect(() => { R.current.double = doubleScore; }, [doubleScore]);
   useEffect(() => { R.current.slow   = slowActive;  }, [slowActive]);
-  useEffect(() => { R.current.mode   = selectedMode ?? 'CLASSIC'; }, [selectedMode]);
+  useEffect(() => { R.current.mode   = gameMode;    }, [gameMode]);
   useEffect(() => { R.current.eaten  = foodEaten;   }, [foodEaten]);
   useEffect(() => { R.current.combo  = comboStreak; }, [comboStreak]);
   useEffect(() => { R.current.particles = particles;}, [particles]);
@@ -448,20 +431,20 @@ const SnakeGame: React.FC = () => {
   useEffect(() => { R.current.skin   = skin;        }, [skin]);
   useEffect(() => { R.current.themeKey = themeKey;  }, [themeKey]);
   useEffect(() => { R.current.showGrid = showGrid;  }, [showGrid]);
+  useEffect(() => { R.current.countdown = countdown;}, [countdown]);
 
-  // ── Canvas sizing (Responsive + maximizes scale to fit space) ────────────────
+  // ── Canvas sizing ─────────────────────────────────────────────────────────
   useEffect(() => {
     const measure = () => {
       if (!gameAreaRef.current) return;
       const r = gameAreaRef.current.getBoundingClientRect();
-      // Increased max scale limit significantly so canvas can expand to fill the area
-      setCanvasScale(Math.min((r.width-2)/CS, (r.height-2)/CS, 4.0)); 
+      setCanvasScale(Math.min((r.width-2)/CS, (r.height-2)/CS, 2.5)); // Allow higher scaling
     };
     measure();
     const ro = new ResizeObserver(measure);
     if (gameAreaRef.current) ro.observe(gameAreaRef.current);
     return () => ro.disconnect();
-  }, [enlarged]); // Re-measure when layout expands
+  }, []);
 
   // ── Animation & draw loop ─────────────────────────────────────────────────
   useEffect(() => {
@@ -469,8 +452,8 @@ const SnakeGame: React.FC = () => {
     const loop = () => {
       pulseRef.current += 0.08;
       rhRef.current = (rhRef.current + 1.5) % 360;
-      setRainbowHue(rhRef.current);
       
+      // Batch simple visual state updates for performance
       setFood(prev => ({ ...prev, pulse: pulseRef.current }));
       setPowerUp(prev => prev ? { ...prev, pulse: pulseRef.current } : null);
       
@@ -483,13 +466,11 @@ const SnakeGame: React.FC = () => {
       const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
-        // ALWAYS use R.current inside the loop to avoid stale closures
-        const T_current = THEMES[R.current.themeKey];
         if (ctx) drawCanvas(ctx, {
           snake:R.current.snake, food:R.current.food, bonusFood:R.current.bonus,
-          powerUp:R.current.pu, gameState:R.current.state, theme:T_current,
-          dark:R.current.themeKey === 'dark', skin:R.current.skin, countdown, particles:R.current.particles,
-          floats:R.current.floats, ghostMode:R.current.ghost,
+          powerUp:R.current.pu, gameState:R.current.state, theme:THEMES[R.current.themeKey],
+          dark:R.current.themeKey === 'dark', skin:R.current.skin, countdown:R.current.countdown, 
+          particles:R.current.particles, floats:R.current.floats, ghostMode:R.current.ghost,
           shieldActive:R.current.shield, rainbowHue:rhRef.current, showGrid:R.current.showGrid,
         });
       }
@@ -497,7 +478,7 @@ const SnakeGame: React.FC = () => {
     };
     af = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(af);
-  }, [countdown]); 
+  }, []); // Empty array prevents restart jitter
 
   // ── Achievement unlock ────────────────────────────────────────────────────
   const unlock = useCallback((id:string) => {
@@ -622,6 +603,15 @@ const SnakeGame: React.FC = () => {
         }
         return prev;
       });
+      
+      setSavedLevels(prev => {
+        const bestLevel = prev[R.current.mode]??1;
+        if (newLevel>bestLevel) {
+          const next={...prev,[R.current.mode]:newLevel};
+          lsSet('sng_saved_levels',JSON.stringify(next)); return next;
+        }
+        return prev;
+      });
 
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = setInterval(tick, getSpeed(newScore,R.current.diff,R.current.slow));
@@ -700,7 +690,6 @@ const SnakeGame: React.FC = () => {
 
   // ── Start / countdown ────────────────────────────────────────────────────
   const startGame = useCallback(() => {
-    if (selectedMode === null) return;
     [intervalRef,timerRef,cdRef].forEach(r => { if(r.current){clearInterval(r.current);r.current=null;} });
 
     setSnake(INIT_SNAKE); setFood({pos:randomCell(INIT_SNAKE),pulse:0});
@@ -709,8 +698,6 @@ const SnakeGame: React.FC = () => {
     setScore(0); setLevel(1); setFoodEaten(0); setComboStreak(0);
     setGhostMode(false); setShieldActive(false); setSlowActive(false); setDoubleScore(false);
     setTotalTime(0); setParticles([]); setFloats([]);
-    
-    setEnlarged(true);
 
     timerRef.current = setInterval(() => {
       setTotalTime(p => { if(p>=60) unlock('survive_60'); return p+1; });
@@ -725,7 +712,7 @@ const SnakeGame: React.FC = () => {
         intervalRef.current = setInterval(tick, SPEED[R.current.diff].base);
       }
     }, 800);
-  }, [tick, unlock, selectedMode]);
+  }, [tick, unlock]);
 
   const togglePause = useCallback(() => {
     setGameState(g => {
@@ -816,7 +803,7 @@ const SnakeGame: React.FC = () => {
   }, [score,difficulty,slowActive,getSpeed]);
   const unlockedCnt = achievements.filter(a=>a.unlocked).length;
 
-  // ── Inline styles ─────────────────────────────────────────────────────────
+  // ── Inline styles (Miniaturized for larger canvas) ──────────────────────
   const btnPri: React.CSSProperties = {
     background:T.btnPri, color:T.btnPriTxt, border:'none',
     borderRadius:'8px', fontFamily:"'Orbitron',monospace", fontWeight:700,
@@ -832,11 +819,11 @@ const SnakeGame: React.FC = () => {
   };
   const scoreBox: React.CSSProperties = {
     background:T.scoreBg, border:`1px solid ${T.border}`,
-    borderRadius:'8px', padding:'3px 4px', textAlign:'center',
+    borderRadius:'6px', padding:'3px 6px', textAlign:'center', // Shrunk padding & radius
   };
   const iconBtn: React.CSSProperties = {
-    background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'8px',
-    color:T.uiSub, cursor:'pointer', padding:'4px 6px', fontSize:'13px',
+    background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'6px', // Shrunk padding & radius
+    color:T.uiSub, cursor:'pointer', padding:'4px 6px', fontSize:'12px',
     lineHeight:'1', display:'flex', alignItems:'center', gap:'3px', transition:'all 0.15s',
   };
 
@@ -855,11 +842,11 @@ const SnakeGame: React.FC = () => {
     <h2 style={{ fontFamily:"'Orbitron',monospace", color:T.uiAccent, margin:0, letterSpacing:'0.1em', fontSize:'clamp(16px,4vw,22px)' }}>{txt}</h2>
   );
 
-  // Dpad button
+  // Miniaturized Dpad button
   const DBtn = ({ d, lbl }:{d:Direction;lbl:string}) => (
     <div
       style={{
-        width:36, height:36, borderRadius:'8px',
+        width:38, height:38, borderRadius:'8px', // Smaller dimensions
         background:pressedDir===d?`${T.uiAccent}28`:T.scoreBg,
         border:`1.5px solid ${pressedDir===d?T.uiAccent:T.border}`,
         color:pressedDir===d?T.uiAccent:T.uiSub, fontSize:'14px',
@@ -902,18 +889,18 @@ const SnakeGame: React.FC = () => {
         <div style={{
           display:'flex', flexDirection:'column', width:'100%', height:'100%',
           maxWidth: isExpanded ? '100%' : '560px', 
-          padding: isExpanded ? '4px 6px' : '8px 10px', 
+          padding: isExpanded ? '6px 8px' : '6px 8px', // Smaller padding
           gap:'4px', alignItems:'stretch',
           transition: 'max-width 0.4s cubic-bezier(0.16, 1, 0.3, 1), padding 0.4s ease'
         }}>
 
-          {/* ── TOP BAR ─────────────────────────────────────────────── */}
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'4px', flexShrink:0, marginBottom:'2px' }}>
-            <div style={{ display:'flex', alignItems:'baseline', gap:'6px' }}>
+          {/* ── TOP BAR (Miniaturized) ─────────────────────────────────────────────── */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'6px', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'5px' }}>
               <h1 style={{
                 fontFamily:"'Orbitron',monospace", fontWeight:900,
-                fontSize:'clamp(15px,3vw,20px)', color:T.uiAccent,
-                letterSpacing:'0.18em', textShadow:isDark?`0 0 18px ${T.uiAccent}99`:'none', margin:0
+                fontSize:'clamp(14px,3vw,20px)', color:T.uiAccent, // Smaller text
+                letterSpacing:'0.18em', textShadow:isDark?`0 0 22px ${T.uiAccent}99`:'none', margin:0
               }}>SNAKE</h1>
               <span style={{
                 fontFamily:"'Orbitron',monospace", fontSize:'9px', fontWeight:700,
@@ -945,8 +932,8 @@ const SnakeGame: React.FC = () => {
             </div>
           </div>
 
-          {/* ── SCORE ROW ───────────────────────────────────────────── */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'3px', flexShrink:0 }}>
+          {/* ── SCORE ROW (Miniaturized) ───────────────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'4px', flexShrink:0 }}>
             {[
               { l:'Score',  v:score,        accent:false },
               { l:'Best',   v:highScore,    accent:true  },
@@ -955,19 +942,19 @@ const SnakeGame: React.FC = () => {
             ].map(it => (
               <div key={it.l} style={scoreBox}>
                 <span style={{ display:'block', fontSize:'8px', fontWeight:700, letterSpacing:'0.12em', color:T.uiSub, textTransform:'uppercase' }}>{it.l}</span>
-                <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'clamp(11px,2.5vw,14px)', fontWeight:700, color:it.accent?T.uiAccent:T.uiText, lineHeight:'1.15' }}>{it.v}</span>
+                <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'clamp(11px,3vw,14px)', fontWeight:700, color:it.accent?T.uiAccent:T.uiText, lineHeight:'1.15' }}>{it.v}</span>
               </div>
             ))}
           </div>
 
-          {/* ── GAME AREA (3× larger on start + fully responsive) ────── */}
+          {/* ── GAME AREA (Given maximum flexible space) ───────────────────────────── */}
           <div ref={gameAreaRef} style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', minHeight:0, position:'relative' }}>
             <div style={{
               position:'relative', width:CS*canvasScale, height:CS*canvasScale,
-              borderRadius:'10px', overflow:'hidden',
+              borderRadius:'14px', overflow:'hidden',
               boxShadow:isDark
-                ? `0 0 0 1.5px ${T.border},0 0 35px ${T.uiAccent2}1a,0 12px 40px rgba(0,0,0,0.75)`
-                : `0 0 0 1.5px ${T.border},0 8px 30px rgba(0,114,255,0.11)`,
+                ? `0 0 0 1.5px ${T.border},0 0 45px ${T.uiAccent2}1a,0 16px 50px rgba(0,0,0,0.75)`
+                : `0 0 0 1.5px ${T.border},0 12px 44px rgba(0,114,255,0.11)`,
             }}
               onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
             >
@@ -979,102 +966,48 @@ const SnakeGame: React.FC = () => {
                 <div style={{
                   position:'absolute', inset:0, background:T.modalBg,
                   display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                  gap:'10px', borderRadius:'10px', backdropFilter:'blur(12px)', padding:'14px',
+                  gap:'12px', borderRadius:'14px', backdropFilter:'blur(12px)', padding:'20px',
                   animation:'fadeUp 0.3s ease',
                 }}>
-                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(24px,6vw,38px)', fontWeight:900, color:T.uiAccent, letterSpacing:'0.15em', textShadow:isDark?`0 0 28px ${T.uiAccent}`:'' }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,7vw,44px)', fontWeight:900, color:T.uiAccent, letterSpacing:'0.15em', textShadow:isDark?`0 0 28px ${T.uiAccent}`:'' }}>
                     SNAKE
                   </div>
-
-                  {/* ── MODE SELECTION (both shown initially; other disappears when one chosen) ── */}
-                  <div style={{ width:'100%', maxWidth:320 }}>
-                    <div style={{ textAlign:'center', fontFamily:"'Orbitron',monospace", fontSize:'11px', color:T.uiAccent, letterSpacing:'0.12em', marginBottom:'10px' }}>
-                      CHOOSE GAME MODE
-                    </div>
-                    {selectedMode === null ? (
-                      <div style={{ display:'flex', gap:'10px', justifyContent:'center', flexWrap:'wrap' }}>
-                        {/* Classic Mode */}
-                        <div
-                          onClick={() => setGameMode('CLASSIC')}
-                          style={{
-                            cursor:'pointer',
-                            width: '138px',
-                            padding:'14px 10px',
-                            borderRadius:'12px',
-                            border: `2px solid ${T.border}`,
-                            background: T.scoreBg,
-                            textAlign:'center',
-                            transition:'all 0.2s cubic-bezier(0.4,0,0.2,1)',
-                          }}
-                        >
-                          <div style={{ fontSize:'32px', marginBottom:'6px' }}>🧱</div>
-                          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'13px', fontWeight:700, color:T.uiText }}>CLASSIC</div>
-                          <div style={{ fontSize:'10px', color:T.uiSub, marginTop:'4px', lineHeight:1.3 }}>Die when you touch the border</div>
-                        </div>
-                        {/* Wrap Mode (second game mode) */}
-                        <div
-                          onClick={() => setGameMode('FREE_ROAM')}
-                          style={{
-                            cursor:'pointer',
-                            width: '138px',
-                            padding:'14px 10px',
-                            borderRadius:'12px',
-                            border: `2px solid ${T.border}`,
-                            background: T.scoreBg,
-                            textAlign:'center',
-                            transition:'all 0.2s cubic-bezier(0.4,0,0.2,1)',
-                          }}
-                        >
-                          <div style={{ fontSize:'32px', marginBottom:'6px' }}>🌀</div>
-                          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'13px', fontWeight:700, color:T.uiText }}>WRAP</div>
-                          <div style={{ fontSize:'10px', color:T.uiSub, marginTop:'4px', lineHeight:1.3 }}>Snake grows • Only dies if it eats itself</div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'12px' }}>
-                        <div style={{
-                          padding:'10px 18px',
-                          borderRadius:'12px',
-                          border: `2.5px solid ${T.uiAccent}`,
-                          background: T.scoreBg,
-                          display:'flex',
-                          alignItems:'center',
-                          gap:'12px',
-                          boxShadow: `0 0 0 3px ${T.uiAccent}22`,
-                        }}>
-                          <span style={{ fontSize:'28px' }}>{selectedMode === 'CLASSIC' ? '🧱' : '🌀'}</span>
-                          <div>
-                            <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'15px', fontWeight:700, color:T.uiText }}>{selectedMode} MODE</div>
-                            <div style={{ fontSize:'10px', color:T.uiSub }}>
-                              {selectedMode === 'CLASSIC' ? 'Border death' : 'Only self-collision • Infinite walls'}
-                            </div>
-                          </div>
-                        </div>
-                        <button style={{ ...btnSec, padding:'8px 14px' }} onClick={() => setSelectedMode(null)}>
-                          CHANGE
-                        </button>
-                      </div>
-                    )}
+                  
+                  {/* Game Mode Selection */}
+                  <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '300px' }}>
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'CLASSIC' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'CLASSIC' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'CLASSIC' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('CLASSIC')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🧱</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>CLASSIC</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Borders are fatal</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['CLASSIC']}</span>
+                    </button>
+                    
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'FREE_ROAM' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'FREE_ROAM' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'FREE_ROAM' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('FREE_ROAM')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🌀</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>FREE ROAM</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Wrap around borders</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['FREE_ROAM']}</span>
+                    </button>
                   </div>
 
-                  <p style={{ color:T.uiSub, fontSize:'9px', textAlign:'center', letterSpacing:'0.04em', maxWidth:'200px', lineHeight:'1.5', margin: '2px 0' }}>
+                  <p style={{ color:T.uiSub, fontSize:'11px', textAlign:'center', letterSpacing:'0.04em', maxWidth:'220px', lineHeight:'1.5', margin: '4px 0' }}>
                     Arrow / WASD to steer · SPACE to pause
                   </p>
                   
-                  <button
-                    style={{
-                      ...btnPri,
-                      fontSize:'13px',
-                      padding:'12px 36px',
-                      marginTop:'2px',
-                      opacity: selectedMode === null ? 0.5 : 1,
-                      cursor: selectedMode === null ? 'not-allowed' : 'pointer',
-                      boxShadow: selectedMode === null ? 'none' : `0 6px 20px ${T.uiAccent}55`
-                    }}
-                    onClick={startGame}
-                    disabled={selectedMode === null}
-                  >
-                    ▶ START GAME
+                  <button style={{ ...btnPri, fontSize:'14px', padding:'14px 44px', textTransform:'uppercase', letterSpacing:'0.15em', boxShadow: `0 8px 24px ${T.uiAccent}55` }} onClick={startGame}>
+                    START GAME
                   </button>
                 </div>
               )}
@@ -1084,31 +1017,31 @@ const SnakeGame: React.FC = () => {
                 <div style={{
                   position:'absolute', inset:0, background:T.modalBg,
                   display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                  gap:'8px', borderRadius:'10px', backdropFilter:'blur(14px)', padding:'16px',
+                  gap:'9px', borderRadius:'14px', backdropFilter:'blur(14px)', padding:'20px',
                   animation:'fadeUp 0.35s ease',
                 }}>
-                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(16px,5vw,24px)', fontWeight:900, color:T.food1, letterSpacing:'0.1em', textShadow:isDark?`0 0 22px ${T.food1}`:'' }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(18px,5vw,28px)', fontWeight:900, color:T.food1, letterSpacing:'0.1em', textShadow:isDark?`0 0 22px ${T.food1}`:'' }}>
                     GAME OVER
                   </div>
-                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(26px,6vw,40px)', fontWeight:900, color:T.uiText, lineHeight:1 }}>
-                    {score}<span style={{ fontSize:'12px', color:T.uiSub, marginLeft:'3px' }}>pts</span>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,6vw,44px)', fontWeight:900, color:T.uiText, lineHeight:1 }}>
+                    {score}<span style={{ fontSize:'14px', color:T.uiSub, marginLeft:'3px' }}>pts</span>
                   </div>
                   {score>=highScore&&score>0 && (
-                    <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiAccent, letterSpacing:'0.08em', animation:'pulseGlow 1s infinite' }}>
+                    <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'11px', color:T.uiAccent, letterSpacing:'0.08em', animation:'pulseGlow 1s infinite' }}>
                       🏆 NEW {difficulty} RECORD!
                     </div>
                   )}
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px', width:'100%', maxWidth:200 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'5px', width:'100%', maxWidth:220 }}>
                     {[['TIME',`${totalTime}s`],['LENGTH',snake.length],['LEVEL',level],['EATEN',foodEaten]].map(([l,v]) => (
-                      <div key={l} style={{ ...scoreBox, padding:'5px' }}>
-                        <span style={{ display:'block', fontSize:'8px', fontWeight:700, color:T.uiSub, letterSpacing:'0.1em', textTransform:'uppercase' }}>{l}</span>
-                        <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'13px', fontWeight:700, color:T.uiText }}>{v}</span>
+                      <div key={l} style={{ ...scoreBox, padding:'7px' }}>
+                        <span style={{ display:'block', fontSize:'9px', fontWeight:700, color:T.uiSub, letterSpacing:'0.1em', textTransform:'uppercase' }}>{l}</span>
+                        <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'15px', fontWeight:700, color:T.uiText }}>{v}</span>
                       </div>
                     ))}
                   </div>
-                  <div style={{ display:'flex', gap:'6px', marginTop:'2px' }}>
-                    <button style={{ ...btnPri, padding:'9px 20px' }} onClick={startGame}>↺ PLAY AGAIN</button>
-                    <button style={{ ...btnSec, padding:'8px 12px' }} onClick={()=>{setGameState('IDLE'); setEnlarged(false); setSelectedMode(null);}}>MENU</button>
+                  <div style={{ display:'flex', gap:'7px', marginTop:'4px' }}>
+                    <button style={{ ...btnPri, padding:'11px 26px' }} onClick={startGame}>↺ PLAY AGAIN</button>
+                    <button style={{ ...btnSec, padding:'10px 14px' }} onClick={()=>setGameState('IDLE')}>MENU</button>
                   </div>
                 </div>
               )}
@@ -1116,7 +1049,7 @@ const SnakeGame: React.FC = () => {
           </div>
 
           {/* ── ACTIVE POWER-UPS ──────────────────────────────────────── */}
-          <div style={{ display:'flex', gap:'4px', justifyContent:'center', flexShrink:0, minHeight:20, flexWrap:'wrap' }}>
+          <div style={{ display:'flex', gap:'5px', justifyContent:'center', flexShrink:0, minHeight:26, flexWrap:'wrap' }}>
             {activePower && (() => {
               const info:Record<PowerUpType,{icon:string;label:string;color:string}> = {
                 SHIELD:     {icon:'🛡',label:'SHIELD',  color:'#ffd200'},
@@ -1128,13 +1061,13 @@ const SnakeGame: React.FC = () => {
               return (
                 <div style={{
                   background:`${nfo.color}18`, border:`1px solid ${nfo.color}55`,
-                  borderRadius:'6px', padding:'2px 8px',
-                  display:'flex', flexDirection:'column', alignItems:'center', gap:'1px',
-                  fontFamily:"'Orbitron',monospace", fontSize:'9px', fontWeight:700, color:nfo.color,
+                  borderRadius:'8px', padding:'3px 10px',
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:'2px',
+                  fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:nfo.color,
                 }}>
                   <span>{nfo.icon} {nfo.label}</span>
-                  <div style={{ width:60, height:2, background:`${nfo.color}28`, borderRadius:1 }}>
-                    <div style={{ width:`${pct*100}%`, height:'100%', background:nfo.color, borderRadius:1, transition:'width 0.1s' }}/>
+                  <div style={{ width:70, height:3, background:`${nfo.color}28`, borderRadius:2 }}>
+                    <div style={{ width:`${pct*100}%`, height:'100%', background:nfo.color, borderRadius:2, transition:'width 0.1s' }}/>
                   </div>
                 </div>
               );
@@ -1142,39 +1075,43 @@ const SnakeGame: React.FC = () => {
             {comboStreak>1 && (
               <div style={{
                 background:'rgba(255,106,0,0.15)', border:'1px solid rgba(255,106,0,0.5)',
-                borderRadius:'6px', padding:'2px 8px',
-                fontFamily:"'Orbitron',monospace", fontSize:'9px', fontWeight:700, color:'#ff6a00',
+                borderRadius:'8px', padding:'3px 10px',
+                fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:'#ff6a00',
                 animation:'pulseGlow 0.8s infinite',
               }}>🔥 ×{comboStreak} COMBO</div>
             )}
           </div>
 
           {/* ── CONTROLS ROW ──────────────────────────────────────────── */}
-          <div style={{ display:'flex', justifyContent:'center', gap:'5px', flexShrink:0 }}>
+          <div style={{ display:'flex', justifyContent:'center', gap:'6px', flexShrink:0 }}>
             {(isRunning||isPaused||isCounting) ? (
               <>
-                <button style={btnPri} onClick={togglePause}>{isPaused?'▶ RESUME':'⏸ PAUSE'}</button>
-                <button style={btnSec} onClick={startGame}>↺ RESTART</button>
-                <button style={{...btnSec, border: 'none', background: 'transparent'}} onClick={() => {setGameState('IDLE'); setEnlarged(false); setSelectedMode(null);}}>✕ EXIT</button>
+                <button style={{...btnPri, padding:'6px 12px'}} onClick={togglePause}>{isPaused?'▶ RESUME':'⏸ PAUSE'}</button>
+                <button style={{...btnSec, padding:'6px 12px'}} onClick={startGame}>↺ RESTART</button>
+                <button style={{...btnSec, border: 'none', background: 'transparent', padding:'6px 12px'}} onClick={() => setGameState('IDLE')}>✕ EXIT</button>
               </>
-            ) : <></>}
+            ) : isOver ? (
+              <></> // Buttons moved into Game Over modal
+            ) : (
+              <></> // Start buttons are inside IDLE modal
+            )}
           </div>
 
-          {/* ── D-PAD ─────────────────────────────────────────────────── */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,36px)', gridTemplateRows:'repeat(3,36px)', gap:'3px', margin:'0 auto', flexShrink:0 }}>
-            <div/><DBtn d="UP"    lbl="▲"/><div/>
+          {/* ── D-PAD (Miniaturized) ──────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,38px)', gridTemplateRows:'repeat(3,38px)', gap:'4px', margin:'0 auto', flexShrink:0 }}>
+            <div/><DBtn d="UP"  lbl="▲"/><div/>
             <DBtn d="LEFT" lbl="◀"/>
-            <div style={{ width:36,height:36,borderRadius:'8px',background:T.scoreBg,border:`1px solid ${T.border}`,opacity:0.3,display:'flex',alignItems:'center',justifyContent:'center',color:T.uiSub,fontSize:'14px' }}>●</div>
+            <div style={{ width:38,height:38,borderRadius:'8px',background:T.scoreBg,border:`1px solid ${T.border}`,opacity:0.3,display:'flex',alignItems:'center',justifyContent:'center',color:T.uiSub,fontSize:'14px' }}>●</div>
             <DBtn d="RIGHT" lbl="▶"/>
             <div/><DBtn d="DOWN"  lbl="▼"/><div/>
           </div>
 
-          <p style={{ textAlign:'center', color:T.uiSub, fontSize:'8px', letterSpacing:'0.07em', flexShrink:0, margin: '2px 0 0 0' }}>
+          <p style={{ textAlign:'center', color:T.uiSub, fontSize:'8px', letterSpacing:'0.07em', flexShrink:0 }}>
             ↑↓←→ · WASD · SPACE=pause · ENTER=start
           </p>
         </div>
 
-        {/* ── PANELS ──────────────────────────────────────────────────── */}
+        {/* ── PANELS (Settings and Skins Fixed state hooks) ─────────── */}
         {panel==='settings' && (
           <PanelShell>
             {panelTitle('SETTINGS')}
@@ -1187,9 +1124,9 @@ const SnakeGame: React.FC = () => {
                   <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', letterSpacing:'0.05em' }}>{o.label}</span>
                   <button style={{
                     background:o.val?T.btnPri:'transparent', border:`1.5px solid ${o.val?'transparent':T.btnSecBdr}`,
-                    borderRadius:'20px', width:42, height:22, cursor:'pointer', position:'relative', transition:'all 0.2s',
-                  }} onClick={()=>o.fn((v:boolean)=>!v)}>
-                    <div style={{ position:'absolute', top:1, left:o.val?21:1, width:16, height:16, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.3)' }}/>
+                    borderRadius:'20px', width:46, height:24, cursor:'pointer', position:'relative', transition:'all 0.2s',
+                  }} onClick={() => o.fn(!o.val)}>
+                    <div style={{ position:'absolute', top:2, left:o.val?22:2, width:20, height:20, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.3)' }}/>
                   </button>
                 </div>
               ))}
@@ -1198,7 +1135,7 @@ const SnakeGame: React.FC = () => {
                 <div style={{ display:'flex', gap:'5px' }}>
                   {DIFFS.map(d=>(
                     <button key={d} style={{ ...btnSec, flex:1, background:difficulty===d?T.btnPri:'transparent', color:difficulty===d?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${difficulty===d?'transparent':T.btnSecBdr}` }}
-                      onClick={()=>setDifficulty(d)}>{d}</button>
+                      onClick={() => setDifficulty(d)}>{d}</button>
                   ))}
                 </div>
               </div>
@@ -1207,7 +1144,7 @@ const SnakeGame: React.FC = () => {
                 <div style={{ display:'flex', gap:'5px' }}>
                   {(['light','dark'] as ThemeKey[]).map(k=>(
                     <button key={k} style={{ ...btnSec, flex:1, background:themeKey===k?T.btnPri:'transparent', color:themeKey===k?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${themeKey===k?'transparent':T.btnSecBdr}` }}
-                      onClick={()=>setThemeKey(k)}>{k==='dark'?'🌙 DARK':'☀️ LIGHT'}</button>
+                      onClick={() => setThemeKey(k)}>{k==='dark'?'🌙 DARK':'☀️ LIGHT'}</button>
                   ))}
                 </div>
               </div>
@@ -1226,7 +1163,7 @@ const SnakeGame: React.FC = () => {
                   border:`1.5px solid ${skin===id?T.uiAccent:T.border}`,
                   borderRadius:'12px', padding:'12px 8px', cursor:'pointer',
                   display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', transition:'all 0.15s',
-                }} onClick={()=>setSkin(id)}>
+                }} onClick={() => setSkin(id)}>
                   <span style={{ fontSize:'24px' }}>{def.icon}</span>
                   <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:skin===id?T.uiAccent:T.uiText, letterSpacing:'0.05em' }}>{def.name}</span>
                   <div style={{ display:'flex', gap:'3px' }}>
@@ -1287,10 +1224,6 @@ const SnakeGame: React.FC = () => {
               <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
                 <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>ACHIEVEMENTS</div>
                 <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'22px', fontWeight:900, color:T.uiAccent2 }}>{unlockedCnt}/{achievements.length}</div>
-              </div>
-              <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
-                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>WRAP MODE HIGH LEVEL</div>
-                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'24px', fontWeight:900, color:T.uiAccent }}>{wrapHighLevel}</div>
               </div>
             </div>
             <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
