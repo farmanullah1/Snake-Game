@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/Snake-Game/',
+  base: process.env.NODE_ENV === 'production' ? '/Snake-Game/' : '/',
   build: {
     outDir: 'dist',
     sourcemap: true,
