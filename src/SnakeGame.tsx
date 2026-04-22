@@ -25,8 +25,8 @@ const ROWS = 20;
 const LOGICAL_CELL = 20;                 // logical pixels per cell (internal canvas coords)
 const LOGICAL_SIZE = LOGICAL_CELL * COLS; // 400 — internal canvas drawing space
 
-const MIN_BOARD = 200;
-const MAX_BOARD = 600;
+const MIN_BOARD = 220;
+const MAX_BOARD = 520;
 
 const SPEED: Record<Difficulty, { base: number; min: number; inc: number }> = {
   CHILL:  { base: 200, min: 100, inc: 3 },
@@ -339,21 +339,17 @@ function useResponsiveBoardSize() {
     const vw = window.visualViewport?.width  ?? window.innerWidth;
     const vh = window.visualViewport?.height ?? window.innerHeight;
 
-    // Dynamic chrome budget: top bar + score row + action bar + D-pad + gaps
+    // Heuristic chrome budgets (top-bar + score + controls + dpad + padding)
+    // These are conservative estimates; layout uses flex so they'll never clip
     const isCompactW = vw <= 375;
     const isCompactH = vh <= 700;
-    const isLandscape = vw > vh;
-    const chromeBudget = isLandscape
-      ? (isCompactH ? 260 : 300)
-      : isCompactH
-        ? (isCompactW ? 300 : 320)
-        : (isCompactW ? 340 : 370);
+    const chromeBudget = isCompactH
+      ? (isCompactW ? 310 : 330)   // tiny phones: less chrome
+      : (isCompactW ? 360 : 380);  // tall phones / tablets
 
-    const hPad = isCompactW ? 12 : 20;
+    const hPad = isCompactW ? 16 : 24;
     const available = Math.min(vw - hPad, vh - chromeBudget);
-    // Floor to nearest COLS multiple for pixel-perfect grid cells
-    const floored = Math.floor(available / COLS) * COLS;
-    return Math.max(MIN_BOARD, Math.min(MAX_BOARD, floored));
+    return Math.max(MIN_BOARD, Math.min(MAX_BOARD, Math.floor(available)));
   }, []);
 
   const [boardSize, setBoardSize] = useState(calcSize);
@@ -367,9 +363,6 @@ function useResponsiveBoardSize() {
     }
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
-    // Detect DPR changes (e.g. moving window between monitors)
-    const dprMq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    dprMq.addEventListener?.('change', update);
     return () => {
       if (vvp) {
         vvp.removeEventListener('resize', update);
@@ -377,7 +370,6 @@ function useResponsiveBoardSize() {
       }
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
-      dprMq.removeEventListener?.('change', update);
     };
   }, [calcSize]);
 
@@ -395,7 +387,7 @@ const SnakeGame: React.FC = () => {
   const vh = typeof window !== 'undefined' ? (window.visualViewport?.height ?? window.innerHeight) : 800;
   const isTiny    = vw <= 340;   // 320px class
   const isCompact = vw <= 390 || vh <= 700;
-
+  const isMobile  = vw <= 768;
 
   // ── Preferences ─────────────────────────────────────────────────────────
   const [themeKey, setThemeKey]     = useState<ThemeKey>(() => lsGet('sng_theme','light') as ThemeKey);
@@ -525,9 +517,6 @@ const SnakeGame: React.FC = () => {
   useEffect(() => {
     let af: number;
     const loop = () => {
-      // Skip rendering when tab is hidden (saves battery)
-      if (document.hidden) { af = requestAnimationFrame(loop); return; }
-
       pulseRef.current += 0.08;
       rhRef.current = (rhRef.current + 1.5) % 360;
 
@@ -548,21 +537,16 @@ const SnakeGame: React.FC = () => {
       const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
-        if (ctx) {
-          // Re-apply DPR transform each frame (guards against context reset)
-          const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          drawCanvas(ctx, {
-            snake:R.current.snake,
-            food:{ ...R.current.food, pulse:pulseRef.current },
-            bonusFood:R.current.bonus,
-            powerUp:R.current.pu ? { ...R.current.pu, pulse:pulseRef.current } : null,
-            gameState:R.current.state, theme:THEMES[R.current.themeKey],
-            dark:R.current.themeKey==='dark', skin:R.current.skin, countdown:R.current.countdown,
-            particles:R.current.particles, floats:R.current.floats, ghostMode:R.current.ghost,
-            shieldActive:R.current.shield, rainbowHue:rhRef.current, showGrid:R.current.showGrid,
-          });
-        }
+        if (ctx) drawCanvas(ctx, {
+          snake:R.current.snake,
+          food:{ ...R.current.food, pulse:pulseRef.current },
+          bonusFood:R.current.bonus,
+          powerUp:R.current.pu ? { ...R.current.pu, pulse:pulseRef.current } : null,
+          gameState:R.current.state, theme:THEMES[R.current.themeKey],
+          dark:R.current.themeKey==='dark', skin:R.current.skin, countdown:R.current.countdown,
+          particles:R.current.particles, floats:R.current.floats, ghostMode:R.current.ghost,
+          shieldActive:R.current.shield, rainbowHue:rhRef.current, showGrid:R.current.showGrid,
+        });
       }
       af = requestAnimationFrame(loop);
     };
@@ -891,7 +875,7 @@ const SnakeGame: React.FC = () => {
   const swipeOriginRef = useRef<{x:number;y:number}|null>(null);
   const swipeHandledRef = useRef(false);
 
-  const SWIPE_THRESHOLD = useMemo(() => Math.max(20, Math.round(boardSize * 0.07)), [boardSize]);
+  const SWIPE_THRESHOLD = useMemo(() => Math.max(16, Math.round(boardSize * 0.06)), [boardSize]);
   const AXIS_RATIO = 1.3; // dominant axis must be this much stronger than weaker
 
   const trySwipeDirection = useCallback((dx:number, dy:number) => {
@@ -962,8 +946,7 @@ const SnakeGame: React.FC = () => {
   const unlockedCnt = achievements.filter(a=>a.unlocked).length;
 
   // D-pad button size: scales from 52 (tiny) → 58 (compact) → 62 (mobile) → 56 (desktop)
-  // Dynamic D-pad sizing: scales with viewport, min 46px touch target (WCAG)
-  const dPadBtnSize = Math.max(46, Math.min(64, Math.round(vw * 0.12)));
+  const dPadBtnSize = isTiny ? 50 : isCompact ? 56 : isMobile ? 62 : 56;
 
   const speedLabel = useMemo(() => {
     const {base,inc}=SPEED[difficulty];
@@ -975,13 +958,13 @@ const SnakeGame: React.FC = () => {
     : 'radial-gradient(circle at top left, rgba(0,198,255,0.18), transparent 34%), radial-gradient(circle at bottom right, rgba(255,99,146,0.16), transparent 30%), linear-gradient(145deg,#f7fffe 0%,#eef5ff 45%,#edf3ff 100%)';
 
   const glassPanel: React.CSSProperties = {
-    background: isDark ? 'rgba(11,16,36,0.62)' : 'rgba(255,255,255,0.62)',
-    border: `1px solid ${isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.75)'}`,
+    background: isDark ? 'rgba(11,16,36,0.58)' : 'rgba(255,255,255,0.58)',
+    border: `1px solid ${isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.72)'}`,
     boxShadow: isDark
-      ? '0 18px 44px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 0.5px rgba(255,255,255,0.06)'
-      : '0 20px 40px rgba(90,125,170,0.18), inset 0 1px 0 rgba(255,255,255,0.88)',
-    backdropFilter: 'blur(24px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+      ? '0 18px 44px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)'
+      : '0 20px 40px rgba(90,125,170,0.16), inset 0 1px 0 rgba(255,255,255,0.85)',
+    backdropFilter: 'blur(20px) saturate(145%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(145%)',
   };
   const softInset = isDark
     ? 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -10px 30px rgba(0,0,0,0.22)'
@@ -1045,7 +1028,6 @@ const SnakeGame: React.FC = () => {
   const DBtn = ({ d, lbl }:{d:Direction;lbl:string}) => (
     <button
       type="button"
-      aria-label={`Move ${d.toLowerCase()}`}
       style={{
         width:dPadBtnSize, height:dPadBtnSize, borderRadius:'12px',
         background: pressedDir===d ? `${T.uiAccent}33` : (isDark ? 'rgba(18,24,46,0.72)' : 'rgba(255,255,255,0.72)'),
@@ -1093,7 +1075,6 @@ const SnakeGame: React.FC = () => {
         @keyframes pulseGlow{0%,100%{opacity:0.8;}50%{opacity:1;}}
         @keyframes floatOrb{0%,100%{transform:translate3d(0,0,0) scale(1);}50%{transform:translate3d(0,-16px,0) scale(1.06);}}
         @keyframes softSpin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
-        @keyframes staggerFadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
         ::-webkit-scrollbar{width:3px;}
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px;}
       `}</style>
@@ -1133,9 +1114,8 @@ const SnakeGame: React.FC = () => {
           padding: isTiny ? '6px 6px' : isCompact ? '8px 8px' : '10px 12px',
           gap: isTiny ? '4px' : isCompact ? '5px' : '7px',
           alignItems:'stretch', position:'relative', zIndex:1,
-          // Allow scrolling on very short viewports (landscape phones)
-          overflowX:'hidden' as const, overflowY:'auto' as const,
-          WebkitOverflowScrolling:'touch',
+          // overflow hidden prevents content from escaping shell on small screens
+          overflow:'hidden',
         }}>
 
           {/* ── TOP BAR ── */}
@@ -1247,9 +1227,8 @@ const SnakeGame: React.FC = () => {
               background: isDark ? 'rgba(8,12,28,0.56)' : 'rgba(255,255,255,0.60)',
               border:`1px solid ${isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.72)'}`,
               boxShadow: isDark
-                ? `0 20px 50px rgba(0,0,0,0.45), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.10)${isRunning ? ', 0 0 22px rgba(96,239,255,0.12)' : ''}`
-                : `0 20px 46px rgba(77,119,191,0.18), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.78)${isRunning ? ', 0 0 22px rgba(0,114,255,0.10)' : ''}`,
-              transition:'box-shadow 0.4s ease',
+                ? `0 20px 50px rgba(0,0,0,0.45), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.10)`
+                : `0 20px 46px rgba(77,119,191,0.18), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.78)`,
               backdropFilter:'blur(20px)',
               touchAction:'none', // critical: prevents browser scroll while swiping
               flexShrink:0,
@@ -1365,8 +1344,8 @@ const SnakeGame: React.FC = () => {
                   )}
 
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', width:'100%', maxWidth:220 }}>
-                    {[['TIME',`${totalTime}s`],['LENGTH',snake.length],['LEVEL',level],['EATEN',foodEaten]].map(([l,v],i)=>(
-                      <div key={l} style={{ ...scoreBox, padding: isTiny ? '7px 6px' : '9px 8px', animation:'staggerFadeUp 0.4s ease both', animationDelay:`${(i as number)*0.08}s` }}>
+                    {[['TIME',`${totalTime}s`],['LENGTH',snake.length],['LEVEL',level],['EATEN',foodEaten]].map(([l,v])=>(
+                      <div key={l} style={{ ...scoreBox, padding: isTiny ? '7px 6px' : '9px 8px' }}>
                         <span style={{ display:'block', fontSize:'8px', fontWeight:700, color:T.uiSub, letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:'3px' }}>{l}</span>
                         <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize: isTiny ? '12px' : '14px', fontWeight:700, color:T.uiText }}>{v}</span>
                       </div>
@@ -1621,7 +1600,7 @@ const SnakeGame: React.FC = () => {
         {/* ── ACHIEVEMENT TOAST ── */}
         {newAch && (
           <div style={{
-            position:'fixed', bottom:'max(20px, calc(20px + env(safe-area-inset-bottom)))', right:12, zIndex:200,
+            position:'fixed', bottom:20, right:12, zIndex:200,
             background: isDark
               ? 'linear-gradient(180deg, rgba(10,8,28,0.97), rgba(8,14,32,0.94))'
               : 'linear-gradient(180deg, rgba(255,255,255,0.97), rgba(244,249,255,0.96))',
@@ -1631,6 +1610,8 @@ const SnakeGame: React.FC = () => {
             boxShadow:'0 16px 32px rgba(0,0,0,0.22)',
             animation:'achSlide 0.4s ease',
             backdropFilter:'blur(18px)', maxWidth:'250px',
+            // Ensure toast is above the safe area on iOS
+            bottom: 'max(20px, calc(20px + env(safe-area-inset-bottom)))',
           }}>
             <span style={{ fontSize:'24px' }}>{newAch.icon}</span>
             <div>
@@ -1644,5 +1625,6 @@ const SnakeGame: React.FC = () => {
     </>
   );
 };
+ 
 
 export default SnakeGame;
