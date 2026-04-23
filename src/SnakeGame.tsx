@@ -1,72 +1,28 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, {
+  useState, useEffect, useRef, useCallback, useMemo
+} from 'react';
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
 // TYPES
-// ═════════════════════════════════════════════════════════════════════════════
-type Point = { x: number; y: number };
-type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
-type GameState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER' | 'COUNTDOWN';
-type GameMode = 'CLASSIC' | 'FREE_ROAM';
-type Difficulty = 'CHILL' | 'NORMAL' | 'TURBO';
-type PowerUpType = 'SHIELD' | 'SLOW' | 'DOUBLE' | 'GHOST_MODE';
-type SkinId = 'classic' | 'neon' | 'fire' | 'ice' | 'gold' | 'rainbow';
+// ─────────────────────────────────────────────────────────────────────────────
+type Point        = { x: number; y: number };
+type Direction    = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+type GameState    = 'IDLE' | 'RUNNING' | 'PAUSED' | 'OVER' | 'COUNTDOWN';
+type GameMode     = 'CLASSIC' | 'FREE_ROAM';
+type Difficulty   = 'CHILL' | 'NORMAL' | 'TURBO';
+type PowerUpType  = 'SHIELD' | 'SLOW' | 'DOUBLE' | 'GHOST_MODE';
+type SkinId       = 'classic' | 'neon' | 'fire' | 'ice' | 'gold' | 'rainbow';
+type Achievement  = { id: string; label: string; icon: string; desc: string; unlocked: boolean; ts?: number; };
+type FloatingText = { id: number; x: number; y: number; text: string; color: string; };
+type Particle     = { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number; };
 
-type Achievement = {
-  id: string;
-  label: string;
-  icon: string;
-  desc: string;
-  unlocked: boolean;
-  ts?: number;
-};
-
-type FloatingText = {
-  id: number;
-  x: number;
-  y: number;
-  text: string;
-  color: string;
-  life: number;
-};
-
-type Particle = {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  color: string;
-  size: number;
-};
-
-type HudState = {
-  score: number;
-  level: number;
-  length: number;
-  combo: number;
-  activePower: { type: PowerUpType; ttl: number } | null;
-  ghostMode: boolean;
-  shieldActive: boolean;
-  slowActive: boolean;
-  doubleScore: boolean;
-  totalTime: number;
-  foodEaten: number;
-  gameState: GameState;
-  countdown: number;
-  highScore: number;
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+const CELL = 20;
 const COLS = 20;
 const ROWS = 20;
-const LOGICAL_CELL = 20;
-const LOGICAL_SIZE = LOGICAL_CELL * COLS;
-
-const MIN_BOARD = 200;
-const MAX_BOARD = 600;
+const CS   = CELL * COLS; // 400
 
 const SPEED: Record<Difficulty, { base: number; min: number; inc: number }> = {
   CHILL:  { base: 200, min: 100, inc: 3 },
@@ -74,13 +30,7 @@ const SPEED: Record<Difficulty, { base: number; min: number; inc: number }> = {
   TURBO:  { base: 75,  min: 25,  inc: 7 },
 };
 
-const SKIN_DEFS: Record<SkinId, {
-  name: string;
-  head: [string, string];
-  body: [string, string];
-  glow: string;
-  icon: string;
-}> = {
+const SKIN_DEFS: Record<SkinId, { name: string; head: [string,string]; body: [string,string]; glow: string; icon: string }> = {
   classic: { name:'Classic', head:['#0052d4','#4364f7'], body:['#00c6ff','#0072ff'], glow:'#0072ff', icon:'🔵' },
   neon:    { name:'Neon',    head:['#00ffa6','#00e5ff'], body:['#00ff87','#60efff'], glow:'#00ff87', icon:'💚' },
   fire:    { name:'Fire',    head:['#ff4e00','#ec9f05'], body:['#ff6b35','#f7c59f'], glow:'#ff4e00', icon:'🔥' },
@@ -89,9 +39,9 @@ const SKIN_DEFS: Record<SkinId, {
   rainbow: { name:'Rainbow', head:['#ff0080','#7928ca'], body:['#ff0080','#7928ca'], glow:'#ff0080', icon:'🌈' },
 };
 
-const DIFFS: Difficulty[] = ['CHILL', 'NORMAL', 'TURBO'];
+const DIFFS: Difficulty[] = ['CHILL','NORMAL','TURBO'];
 
-const ACHIEVEMENT_DEFS: Omit<Achievement, 'unlocked'>[] = [
+const ACHIEVEMENT_DEFS: Omit<Achievement,'unlocked'>[] = [
   { id:'first_food',  icon:'🍎', label:'First Bite',    desc:'Eat your first food' },
   { id:'score_50',    icon:'⭐', label:'Rising Star',    desc:'Score 50 points' },
   { id:'score_100',   icon:'🌟', label:'Century',        desc:'Score 100 points' },
@@ -108,6 +58,9 @@ const ACHIEVEMENT_DEFS: Omit<Achievement, 'unlocked'>[] = [
   { id:'shield_used', icon:'🛡️', label:'Shielded',       desc:'Block a death with shield' },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THEMES
+// ─────────────────────────────────────────────────────────────────────────────
 const THEMES = {
   light: {
     bg:        ['#f0fffe','#e8f4fd','#f5f9ff'],
@@ -152,322 +105,178 @@ const THEMES = {
     dark:      true,
   },
 };
-
 type ThemeKey = 'light' | 'dark';
-type Theme = typeof THEMES['light'];
+type Theme    = typeof THEMES['light'];
 
-const OPPOSITE: Record<Direction, Direction> = {
-  UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT',
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
 const randomCell = (exclude: Point[]): Point => {
   let p: Point;
-  do {
-    p = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
-  } while (exclude.some(e => e.x === p.x && e.y === p.y));
+  do { p = { x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS) }; }
+  while (exclude.some(e => e.x===p.x && e.y===p.y));
   return p;
 };
+const vibrate = (p: number | number[]) => { try { navigator.vibrate?.(p); } catch {} };
+const lsGet = (k: string, fb: string) => { try { return localStorage.getItem(k) ?? fb; } catch { return fb; } };
+const lsSet = (k: string, v: string)  => { try { localStorage.setItem(k, v); }         catch {} };
 
-const vibrate = (p: number | number[]) => {
-  try { navigator.vibrate?.(p); } catch {}
-};
-
-const lsGet = (k: string, fb: string) => {
-  try { return localStorage.getItem(k) ?? fb; } catch { return fb; }
-};
-
-const lsSet = (k: string, v: string) => {
-  try { localStorage.setItem(k, v); } catch {}
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// SOUND ENGINE (Web Audio API)
-// ═════════════════════════════════════════════════════════════════════════════
-class SoundEngine {
-  ctx: AudioContext | null = null;
-  muted = false;
-
-  private ensureCtx() {
-    if (!this.ctx) this.ctx = new AudioContext();
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-  }
-
-  private osc(freq: number, type: OscillatorType, duration: number, gainVal = 0.08) {
-    if (this.muted || !this.ctx) return;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, this.ctx.currentTime);
-    g.gain.setValueAtTime(gainVal, this.ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration / 1000);
-    o.connect(g).connect(this.ctx.destination);
-    o.start();
-    o.stop(this.ctx.currentTime + duration / 1000);
-  }
-
-  playEat() {
-    this.ensureCtx();
-    this.osc(440, 'sine', 40, 0.06);
-    setTimeout(() => this.osc(880, 'sine', 40, 0.06), 30);
-  }
-
-  playBonus() {
-    this.ensureCtx();
-    this.osc(600, 'square', 60, 0.04);
-    setTimeout(() => this.osc(900, 'square', 60, 0.04), 70);
-  }
-
-  playPowerUp() {
-    this.ensureCtx();
-    this.osc(523, 'sine', 80, 0.06);
-    setTimeout(() => this.osc(659, 'sine', 80, 0.06), 90);
-    setTimeout(() => this.osc(784, 'sine', 120, 0.06), 180);
-  }
-
-  playDie() {
-    this.ensureCtx();
-    if (!this.ctx) return;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(440, this.ctx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(220, this.ctx.currentTime + 0.3);
-    g.gain.setValueAtTime(0.1, this.ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.3);
-    o.connect(g).connect(this.ctx.destination);
-    o.start();
-    o.stop(this.ctx.currentTime + 0.3);
-  }
-
-  playTick() {
-    this.ensureCtx();
-    this.osc(1200, 'triangle', 20, 0.03);
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CANVAS DRAWING
-// ═════════════════════════════════════════════════════════════════════════════
-function rrect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS DRAW
+// ─────────────────────────────────────────────────────────────────────────────
+function rrect(ctx: CanvasRenderingContext2D, x:number, y:number, w:number, h:number, r:number) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
 }
 
-interface DrawState {
-  snake: Point[];
-  food: { pos: Point; pulse: number };
-  bonusFood: { pos: Point; ttl: number } | null;
-  powerUp: { pos: Point; type: PowerUpType; pulse: number } | null;
-  gameState: GameState;
-  theme: Theme;
-  dark: boolean;
-  skin: SkinId;
-  countdown: number;
-  particles: Particle[];
-  floats: FloatingText[];
-  ghostMode: boolean;
-  shieldActive: boolean;
-  rainbowHue: number;
-  showGrid: boolean;
+interface DS {
+  snake:Point[]; food:{pos:Point;pulse:number;};
+  bonusFood:{pos:Point;ttl:number;}|null;
+  powerUp:{pos:Point;type:PowerUpType;pulse:number;}|null;
+  gameState:GameState; theme:Theme; dark:boolean;
+  skin:SkinId; countdown:number;
+  particles:Particle[]; floats:FloatingText[];
+  ghostMode:boolean; shieldActive:boolean;
+  rainbowHue:number; showGrid:boolean;
 }
 
-function drawCanvas(ctx: CanvasRenderingContext2D, d: DrawState) {
-  const { snake, food, bonusFood, powerUp, gameState, theme, dark, skin, countdown,
-          particles, floats, ghostMode, shieldActive, rainbowHue, showGrid } = d;
-  const C = LOGICAL_CELL;
-  const W = LOGICAL_SIZE;
-  const H = LOGICAL_SIZE;
-  const T = theme;
+function drawCanvas(ctx:CanvasRenderingContext2D, d:DS) {
+  const { snake,food,bonusFood,powerUp,gameState,theme,dark,skin,countdown,
+          particles,floats,ghostMode,shieldActive,rainbowHue,showGrid } = d;
+  const W=CS, H=CS, T=theme;
 
-  // Background
-  const bgG = ctx.createLinearGradient(0, 0, W, H);
-  T.bg.forEach((c, i) => bgG.addColorStop(i / (T.bg.length - 1), c));
-  ctx.fillStyle = bgG;
-  ctx.fillRect(0, 0, W, H);
+  // BG
+  const bgG = ctx.createLinearGradient(0,0,W,H);
+  T.bg.forEach((c,i) => bgG.addColorStop(i/(T.bg.length-1), c));
+  ctx.fillStyle = bgG; ctx.fillRect(0,0,W,H);
 
-  // Scanlines (dark mode)
+  // Scanlines
   if (dark) {
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
-    for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+    for (let y=0; y<H; y+=4) { ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(0,y,W,1); }
   }
 
   // Grid
   if (showGrid) {
-    ctx.strokeStyle = T.gridLine;
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= COLS; i++) {
-      ctx.beginPath(); ctx.moveTo(i * C, 0); ctx.lineTo(i * C, H); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i * C); ctx.lineTo(W, i * C); ctx.stroke();
+    ctx.strokeStyle = T.gridLine; ctx.lineWidth = 0.5;
+    for (let i=0; i<=COLS; i++) {
+      ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*CELL); ctx.lineTo(W,i*CELL); ctx.stroke();
     }
   }
 
   // Particles
   particles.forEach(p => {
-    ctx.save();
-    ctx.globalAlpha = p.life / p.maxLife;
-    ctx.shadowColor = p.color;
-    ctx.shadowBlur = dark ? 8 : 3;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * (p.life / p.maxLife), 0, Math.PI * 2);
-    ctx.fill();
+    ctx.save(); ctx.globalAlpha=p.life;
+    ctx.shadowColor=p.color; ctx.shadowBlur=dark?8:3;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2); ctx.fill();
     ctx.restore();
   });
 
-  // Power-up
+  // Power-up on board
   if (powerUp) {
-    const px = powerUp.pos.x * C + C / 2;
-    const py = powerUp.pos.y * C + C / 2;
-    const pulse = 0.78 + Math.sin(powerUp.pulse) * 0.22;
-    const r = (C / 2 - 1) * pulse;
+    const px=powerUp.pos.x*CELL+CELL/2, py=powerUp.pos.y*CELL+CELL/2;
+    const pulse=0.78+Math.sin(powerUp.pulse)*0.22;
+    const r=(CELL/2-1)*pulse;
     ctx.save();
-    ctx.shadowColor = '#ffd200';
-    ctx.shadowBlur = dark ? 22 : 10;
-    const pG = ctx.createRadialGradient(px, py, 1, px, py, r);
-    pG.addColorStop(0, '#fffacc');
-    pG.addColorStop(1, '#ffd200');
-    ctx.fillStyle = pG;
-    rrect(ctx, px - r, py - r, r * 2, r * 2, 5);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    const icons: Record<PowerUpType, string> = { SHIELD: '🛡', SLOW: '🐢', DOUBLE: '×2', GHOST_MODE: '👻' };
-    ctx.font = `bold ${C - 5}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(icons[powerUp.type], px, py);
+    ctx.shadowColor='#ffd200'; ctx.shadowBlur=dark?22:10;
+    const pG=ctx.createRadialGradient(px,py,1,px,py,r);
+    pG.addColorStop(0,'#fffacc'); pG.addColorStop(1,'#ffd200');
+    ctx.fillStyle=pG; rrect(ctx,px-r,py-r,r*2,r*2,5); ctx.fill();
+    ctx.shadowBlur=0;
+    const icons:Record<PowerUpType,string>={SHIELD:'🛡',SLOW:'🐢',DOUBLE:'×2',GHOST_MODE:'👻'};
+    ctx.font=`bold ${CELL-5}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(icons[powerUp.type],px,py);
     ctx.restore();
   }
 
   // Bonus food
   if (bonusFood) {
-    const bx = bonusFood.pos.x * C + C / 2;
-    const by = bonusFood.pos.y * C + C / 2;
-    ctx.save();
-    ctx.globalAlpha = Math.min(1, bonusFood.ttl / 40);
-    ctx.shadowColor = '#ff00cc';
-    ctx.shadowBlur = dark ? 20 : 9;
-    const bG = ctx.createRadialGradient(bx, by, 1, bx, by, C / 2 - 1);
-    bG.addColorStop(0, '#ff00cc');
-    bG.addColorStop(1, '#7b00ff');
-    ctx.fillStyle = bG;
-    rrect(ctx, bonusFood.pos.x * C + 2, bonusFood.pos.y * C + 2, C - 4, C - 4, 6);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.font = `bold ${C - 5}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('★', bx, by);
-    ctx.restore();
+    const bx=bonusFood.pos.x*CELL+CELL/2, by=bonusFood.pos.y*CELL+CELL/2;
+    ctx.save(); ctx.globalAlpha=Math.min(1,bonusFood.ttl/40);
+    ctx.shadowColor='#ff00cc'; ctx.shadowBlur=dark?20:9;
+    const bG=ctx.createRadialGradient(bx,by,1,bx,by,CELL/2-1);
+    bG.addColorStop(0,'#ff00cc'); bG.addColorStop(1,'#7b00ff');
+    ctx.fillStyle=bG; rrect(ctx,bonusFood.pos.x*CELL+2,bonusFood.pos.y*CELL+2,CELL-4,CELL-4,6);
+    ctx.fill(); ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.font=`bold ${CELL-5}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('★',bx,by); ctx.restore();
   }
 
   // Main food
   {
-    const fx = food.pos.x * C + C / 2;
-    const fy = food.pos.y * C + C / 2;
-    const pulse = 0.84 + Math.sin(food.pulse) * 0.16;
-    const r = (C / 2 - 1.5) * pulse;
+    const fx=food.pos.x*CELL+CELL/2, fy=food.pos.y*CELL+CELL/2;
+    const pulse=0.84+Math.sin(food.pulse)*0.16;
+    const r=(CELL/2-1.5)*pulse;
     ctx.save();
-    ctx.shadowColor = T.foodGlow;
-    ctx.shadowBlur = dark ? 20 : 9;
-    const fG = ctx.createRadialGradient(fx - r * 0.25, fy - r * 0.25, 0, fx, fy, r);
-    fG.addColorStop(0, T.food1);
-    fG.addColorStop(1, T.food2);
-    ctx.fillStyle = fG;
-    ctx.beginPath();
-    ctx.arc(fx, fy, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath();
-    ctx.arc(fx - r * 0.3, fy - r * 0.3, r * 0.28, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.shadowColor=T.foodGlow; ctx.shadowBlur=dark?20:9;
+    const fG=ctx.createRadialGradient(fx-r*0.25,fy-r*0.25,0,fx,fy,r);
+    fG.addColorStop(0,T.food1); fG.addColorStop(1,T.food2);
+    ctx.fillStyle=fG; ctx.beginPath(); ctx.arc(fx,fy,r,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0; ctx.fillStyle='rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(fx-r*0.3,fy-r*0.3,r*0.28,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
 
   // Snake
   const sk = SKIN_DEFS[skin];
-  snake.forEach((seg, i) => {
-    const x = seg.x * C + 1;
-    const y = seg.y * C + 1;
-    const sz = C - 2;
-    const rad = i === 0 ? 7 : 4;
-    const ratio = snake.length > 1 ? i / (snake.length - 1) : 0;
+  snake.forEach((seg,i) => {
+    const x=seg.x*CELL+1, y=seg.y*CELL+1, sz=CELL-2;
+    const rad=i===0?7:4;
+    const ratio=snake.length>1?i/(snake.length-1):0;
     ctx.save();
-    ctx.globalAlpha = ghostMode ? (i === 0 ? 0.55 : 0.35) : 1;
+    ctx.globalAlpha = ghostMode ? (i===0?0.55:0.35) : 1;
     if (dark) {
-      const hue = skin === 'rainbow' ? (rainbowHue + i * 18) % 360 : -1;
-      ctx.shadowBlur = i === 0 ? 22 : 13;
-      ctx.shadowColor = hue >= 0 ? `hsl(${hue},100%,60%)` : (i === 0 ? sk.head[0] : sk.glow);
+      const hue = skin==='rainbow' ? (rainbowHue+i*18)%360 : -1;
+      ctx.shadowBlur = i===0?22:13;
+      ctx.shadowColor = hue>=0 ? `hsl(${hue},100%,60%)` : (i===0?sk.head[0]:sk.glow);
     }
-    let fill: string | CanvasGradient;
-    if (skin === 'rainbow') {
-      const h = (rainbowHue + i * 18) % 360;
-      const h2 = (h + 30) % 360;
-      const rg = ctx.createLinearGradient(x, y, x + sz, y + sz);
-      rg.addColorStop(0, `hsl(${h},100%,${i === 0 ? 52 : 58}%)`);
-      rg.addColorStop(1, `hsl(${h2},100%,62%)`);
-      fill = rg;
-    } else if (i === 0) {
-      const hg = ctx.createLinearGradient(x, y, x + sz, y + sz);
-      hg.addColorStop(0, sk.head[0]);
-      hg.addColorStop(1, sk.head[1]);
-      fill = hg;
+    let fill: string|CanvasGradient;
+    if (skin==='rainbow') {
+      const h=(rainbowHue+i*18)%360, h2=(h+30)%360;
+      const rg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      rg.addColorStop(0,`hsl(${h},100%,${i===0?52:58}%)`);
+      rg.addColorStop(1,`hsl(${h2},100%,62%)`);
+      fill=rg;
+    } else if (i===0) {
+      const hg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      hg.addColorStop(0,sk.head[0]); hg.addColorStop(1,sk.head[1]); fill=hg;
     } else {
-      const bg = ctx.createLinearGradient(x, y, x + sz, y + sz);
-      bg.addColorStop(0, sk.body[0]);
-      bg.addColorStop(1, sk.body[1]);
-      ctx.globalAlpha = ghostMode ? 0.28 : (1 - ratio * 0.28);
-      fill = bg;
+      const bg=ctx.createLinearGradient(x,y,x+sz,y+sz);
+      bg.addColorStop(0,sk.body[0]); bg.addColorStop(1,sk.body[1]);
+      ctx.globalAlpha=ghostMode?0.28:(1-ratio*0.28); fill=bg;
     }
-    ctx.fillStyle = fill;
-    rrect(ctx, x, y, sz, sz, rad);
-    ctx.fill();
-
+    ctx.fillStyle=fill; rrect(ctx,x,y,sz,sz,rad); ctx.fill();
+    
     // Shield ring
-    if (i === 0 && shieldActive) {
-      ctx.save();
-      ctx.globalAlpha = 0.7;
-      ctx.strokeStyle = '#ffd200';
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = '#ffd200';
-      ctx.shadowBlur = 14;
-      rrect(ctx, x - 2.5, y - 2.5, sz + 5, sz + 5, rad + 3);
-      ctx.stroke();
+    if (i===0&&shieldActive) {
+      ctx.save(); ctx.globalAlpha=0.7;
+      ctx.strokeStyle='#ffd200'; ctx.lineWidth=2.5;
+      ctx.shadowColor='#ffd200'; ctx.shadowBlur=14;
+      rrect(ctx,x-2.5,y-2.5,sz+5,sz+5,rad+3); ctx.stroke();
       ctx.restore();
     }
-
+    
     // Eyes
-    if (i === 0) {
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
-      const hp = snake[0];
-      const nx2 = snake[1] ?? { x: hp.x - 1, y: hp.y };
-      const dx = hp.x - nx2.x;
-      const dy = hp.y - nx2.y;
-      const cx = hp.x * C + C / 2;
-      const cy = hp.y * C + C / 2;
-      ctx.fillStyle = '#fff';
+    if (i===0) {
+      ctx.globalAlpha=1; ctx.shadowBlur=0;
+      const hp=snake[0], nx2=snake[1]??{x:hp.x-1,y:hp.y};
+      const dx=hp.x-nx2.x, dy=hp.y-nx2.y;
+      const cx=hp.x*CELL+CELL/2, cy=hp.y*CELL+CELL/2;
+      ctx.fillStyle='#fff';
       ctx.beginPath();
-      ctx.arc(cx + dy * 4 + dx * 3, cy - dx * 4 + dy * 3, 2.8, 0, Math.PI * 2);
-      ctx.arc(cx - dy * 4 + dx * 3, cy + dx * 4 + dy * 3, 2.8, 0, Math.PI * 2);
+      ctx.arc(cx+dy*4+dx*3,cy-dx*4+dy*3,2.8,0,Math.PI*2);
+      ctx.arc(cx-dy*4+dx*3,cy+dx*4+dy*3,2.8,0,Math.PI*2);
       ctx.fill();
-      ctx.fillStyle = '#001133';
+      ctx.fillStyle='#001133';
       ctx.beginPath();
-      ctx.arc(cx + dy * 4 + dx * 4.3, cy - dx * 4 + dy * 4.3, 1.4, 0, Math.PI * 2);
-      ctx.arc(cx - dy * 4 + dx * 4.3, cy + dx * 4 + dy * 4.3, 1.4, 0, Math.PI * 2);
+      ctx.arc(cx+dy*4+dx*4.3,cy-dx*4+dy*4.3,1.4,0,Math.PI*2);
+      ctx.arc(cx-dy*4+dx*4.3,cy+dx*4+dy*4.3,1.4,0,Math.PI*2);
       ctx.fill();
     }
     ctx.restore();
@@ -476,172 +285,208 @@ function drawCanvas(ctx: CanvasRenderingContext2D, d: DrawState) {
   // Floating texts
   floats.forEach(ft => {
     ctx.save();
-    ctx.font = `bold 13px 'Orbitron',monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = ft.color;
-    ctx.shadowColor = ft.color;
-    ctx.shadowBlur = 8;
-    ctx.fillText(ft.text, ft.x, ft.y);
-    ctx.restore();
+    ctx.font=`bold 13px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=ft.color; ctx.shadowColor=ft.color; ctx.shadowBlur=8;
+    ctx.fillText(ft.text,ft.x,ft.y); ctx.restore();
   });
 
   // Pause overlay
-  if (gameState === 'PAUSED') {
-    ctx.fillStyle = T.pauseOvl;
-    ctx.fillRect(0, 0, W, H);
+  if (gameState==='PAUSED') {
+    ctx.fillStyle=T.pauseOvl; ctx.fillRect(0,0,W,H);
     ctx.save();
-    ctx.font = `900 34px 'Orbitron',monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = dark ? '#60efff' : '#0072ff';
-    ctx.shadowColor = dark ? '#60efff' : '#0072ff';
-    ctx.shadowBlur = dark ? 22 : 8;
-    ctx.fillText('PAUSED', W / 2, H / 2 - 14);
-    ctx.shadowBlur = 0;
-    ctx.font = `600 11px 'Rajdhani',sans-serif`;
-    ctx.fillStyle = dark ? '#7a90b0' : '#5a6a7a';
-    ctx.fillText('PRESS SPACE TO RESUME', W / 2, H / 2 + 16);
+    ctx.font=`900 34px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=dark?'#60efff':'#0072ff';
+    ctx.shadowColor=dark?'#60efff':'#0072ff'; ctx.shadowBlur=dark?22:8;
+    ctx.fillText('PAUSED',W/2,H/2-14);
+    ctx.shadowBlur=0; ctx.font=`600 11px 'Rajdhani',sans-serif`;
+    ctx.fillStyle=dark?'#7a90b0':'#5a6a7a';
+    ctx.fillText('PRESS SPACE TO RESUME',W/2,H/2+16);
     ctx.restore();
   }
 
   // Countdown
-  if (gameState === 'COUNTDOWN') {
-    ctx.fillStyle = T.pauseOvl;
-    ctx.fillRect(0, 0, W, H);
+  if (gameState==='COUNTDOWN') {
+    ctx.fillStyle=T.pauseOvl; ctx.fillRect(0,0,W,H);
     ctx.save();
-    ctx.font = `900 68px 'Orbitron',monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = dark ? '#60efff' : '#0072ff';
-    ctx.shadowColor = dark ? '#60efff' : '#0072ff';
-    ctx.shadowBlur = dark ? 35 : 14;
-    ctx.fillText(countdown > 0 ? String(countdown) : 'GO!', W / 2, H / 2);
+    ctx.font=`900 68px 'Orbitron',monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=dark?'#60efff':'#0072ff';
+    ctx.shadowColor=dark?'#60efff':'#0072ff'; ctx.shadowBlur=dark?35:14;
+    ctx.fillText(countdown>0?String(countdown):'GO!',W/2,H/2);
     ctx.restore();
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// BOARD SIZE HOOK
-// ═════════════════════════════════════════════════════════════════════════════
-function useResponsiveBoardSize() {
-  const calc = useCallback(() => {
-    const vw = window.visualViewport?.width ?? window.innerWidth;
-    const vh = window.visualViewport?.height ?? window.innerHeight;
-    const isLandscape = vw > vh;
-    const isCompactW = vw <= 375;
-    const isCompactH = vh <= 700;
-
-    // Chrome budget: space needed for UI above and below canvas
-    const chromeBudget = isLandscape
-      ? (isCompactH ? 180 : 220)
-      : (isCompactH
-          ? (isCompactW ? 300 : 320)
-          : (isCompactW ? 350 : 370));
-
-    const hPad = isCompactW ? 16 : 24;
-    const available = Math.min(vw - hPad, vh - chromeBudget);
-    const raw = Math.max(MIN_BOARD, Math.min(MAX_BOARD, Math.floor(available)));
-    // Snap to nearest multiple of COLS for pixel-perfect cells
-    return Math.floor(raw / COLS) * COLS;
-  }, []);
-
-  const [size, setSize] = useState(calc);
-
-  useEffect(() => {
-    const update = () => setSize(calc());
-    const vvp = window.visualViewport;
-    if (vvp) {
-      vvp.addEventListener('resize', update);
-      vvp.addEventListener('scroll', update);
-    }
-    window.addEventListener('resize', update);
-    window.addEventListener('orientationchange', update);
-    return () => {
-      if (vvp) {
-        vvp.removeEventListener('resize', update);
-        vvp.removeEventListener('scroll', update);
-      }
-      window.removeEventListener('resize', update);
-      window.removeEventListener('orientationchange', update);
-    };
-  }, [calc]);
-
-  return size;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ═════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
 const SnakeGame: React.FC = () => {
-  const boardSize = useResponsiveBoardSize();
 
-  const vw = typeof window !== 'undefined' ? (window.visualViewport?.width ?? window.innerWidth) : 400;
-  const vh = typeof window !== 'undefined' ? (window.visualViewport?.height ?? window.innerHeight) : 800;
-  const isTiny = vw <= 340;
-  const isCompact = vw <= 390 || vh <= 700;
-  const isMobile = vw <= 768;
-  const isLandscape = vw > vh;
-
-  // ── Preferences (persisted) ─────────────────────────────────────────────
-  const [themeKey, setThemeKey] = useState<ThemeKey>(() => lsGet('sng_theme', 'light') as ThemeKey);
-  const [skin, setSkin] = useState<SkinId>(() => lsGet('sng_skin', 'classic') as SkinId);
-  const [difficulty, setDifficulty] = useState<Difficulty>(() => lsGet('sng_diff', 'NORMAL') as Difficulty);
-  const [gameMode, setGameMode] = useState<GameMode>(() => lsGet('sng_mode', 'CLASSIC') as GameMode);
-  const [showGrid, setShowGrid] = useState(() => lsGet('sng_grid', '1') === '1');
-  const [haptics, setHaptics] = useState(() => lsGet('sng_haptic', '1') === '1');
-  const [soundOn, setSoundOn] = useState(() => lsGet('sng_sound', '1') === '1');
-
+  // ── Preferences ─────────────────────────────────────────────────────────
+  const [themeKey, setThemeKey]       = useState<ThemeKey>(() => lsGet('sng_theme','light') as ThemeKey);
+  const [skin, setSkin]               = useState<SkinId>(() => lsGet('sng_skin','classic') as SkinId);
+  const [difficulty, setDifficulty]   = useState<Difficulty>(() => lsGet('sng_diff','NORMAL') as Difficulty);
+  const [gameMode, setGameMode]       = useState<GameMode>(() => lsGet('sng_mode','CLASSIC') as GameMode);
+  const [showGrid, setShowGrid]       = useState(() => lsGet('sng_grid','1')==='1');
+  const [haptics, setHaptics]         = useState(() => lsGet('sng_haptic','1')==='1');
+  
   const T = THEMES[themeKey];
   const isDark = themeKey === 'dark';
 
-  useEffect(() => { lsSet('sng_theme', themeKey); }, [themeKey]);
-  useEffect(() => { lsSet('sng_skin', skin); }, [skin]);
-  useEffect(() => { lsSet('sng_diff', difficulty); }, [difficulty]);
-  useEffect(() => { lsSet('sng_mode', gameMode); }, [gameMode]);
-  useEffect(() => { lsSet('sng_grid', showGrid ? '1' : '0'); }, [showGrid]);
-  useEffect(() => { lsSet('sng_haptic', haptics ? '1' : '0'); }, [haptics]);
-  useEffect(() => { lsSet('sng_sound', soundOn ? '1' : '0'); }, [soundOn]);
+  useEffect(() => { lsSet('sng_theme',themeKey); }, [themeKey]);
+  useEffect(() => { lsSet('sng_skin',skin); }, [skin]);
+  useEffect(() => { lsSet('sng_diff',difficulty); }, [difficulty]);
+  useEffect(() => { lsSet('sng_mode',gameMode); }, [gameMode]);
+  useEffect(() => { lsSet('sng_grid',showGrid?'1':'0'); }, [showGrid]);
+  useEffect(() => { lsSet('sng_haptic',haptics?'1':'0'); }, [haptics]);
 
-  // ── Sound engine ────────────────────────────────────────────────────────
-  const soundRef = useRef(new SoundEngine());
-  useEffect(() => { soundRef.current.muted = !soundOn; }, [soundOn]);
+  // ── Game state ───────────────────────────────────────────────────────────
+  const INIT_SNAKE: Point[] = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  const [snake, setSnake]             = useState<Point[]>(INIT_SNAKE);
+  const [direction, setDirection]     = useState<Direction>('RIGHT');
+  const pendDir                       = useRef<Direction>('RIGHT');
+  const [food, setFood]               = useState(() => ({ pos:randomCell(INIT_SNAKE), pulse:0 }));
+  const [bonusFood, setBonusFood]     = useState<{pos:Point;ttl:number}|null>(null);
+  const [powerUp, setPowerUp]         = useState<{pos:Point;type:PowerUpType;pulse:number}|null>(null);
+  const [activePower, setActivePower] = useState<{type:PowerUpType;ttl:number}|null>(null);
+  const [gameState, setGameState]     = useState<GameState>('IDLE');
+  const [score, setScore]             = useState(0);
+  const [level, setLevel]             = useState(1);
+  const [countdown, setCountdown]     = useState(3);
+  const [comboStreak, setComboStreak] = useState(0);
+  const [ghostMode, setGhostMode]     = useState(false);
+  const [shieldActive, setShieldActive] = useState(false);
+  const [slowActive, setSlowActive]   = useState(false);
+  const [doubleScore, setDoubleScore] = useState(false);
+  const [totalTime, setTotalTime]     = useState(0);
+  const [foodEaten, setFoodEaten]     = useState(0);
 
-  // ── High scores & achievements ──────────────────────────────────────────
-  const [highScores, setHighScores] = useState<Record<Difficulty, number>>(() => {
-    try { return JSON.parse(lsGet('sng_hs2', 'null')) ?? { CHILL: 0, NORMAL: 0, TURBO: 0 }; }
-    catch { return { CHILL: 0, NORMAL: 0, TURBO: 0 }; }
+  // ── High scores & achievements ───────────────────────────────────────────
+  const [highScores, setHighScores]   = useState<Record<Difficulty,number>>(() => {
+    try { return JSON.parse(lsGet('sng_hs2','null')) ?? {CHILL:0,NORMAL:0,TURBO:0}; }
+    catch { return {CHILL:0,NORMAL:0,TURBO:0}; }
   });
-  const highScoresRef = useRef(highScores);
-  useEffect(() => { highScoresRef.current = highScores; }, [highScores]);
-
-  const [savedLevels, setSavedLevels] = useState<Record<GameMode, number>>(() => {
-    try { return JSON.parse(lsGet('sng_saved_levels', 'null')) ?? { CLASSIC: 1, FREE_ROAM: 1 }; }
-    catch { return { CLASSIC: 1, FREE_ROAM: 1 }; }
+  
+  const [savedLevels, setSavedLevels] = useState<Record<GameMode,number>>(() => {
+    try { return JSON.parse(lsGet('sng_saved_levels','null')) ?? {CLASSIC:1,FREE_ROAM:1}; }
+    catch { return {CLASSIC:1,FREE_ROAM:1}; }
   });
 
   const [achievements, setAchievements] = useState<Achievement[]>(() => {
     try {
-      const saved = JSON.parse(lsGet('sng_ach', '[]')) as { id: string; ts?: number }[];
-      return ACHIEVEMENT_DEFS.map(d => ({
-        ...d,
-        unlocked: saved.some(s => s.id === d.id),
-        ts: saved.find(s => s.id === d.id)?.ts,
-      }));
-    } catch {
-      return ACHIEVEMENT_DEFS.map(d => ({ ...d, unlocked: false }));
-    }
+      const saved = JSON.parse(lsGet('sng_ach','[]')) as {id:string;ts?:number}[];
+      return ACHIEVEMENT_DEFS.map(d => ({ ...d, unlocked:saved.some(s=>s.id===d.id), ts:saved.find(s=>s.id===d.id)?.ts }));
+    } catch { return ACHIEVEMENT_DEFS.map(d=>({...d,unlocked:false})); }
+  });
+  const [newAch, setNewAch]           = useState<Achievement|null>(null);
+  const achTimerRef                   = useRef<ReturnType<typeof setTimeout>|null>(null);
+
+  // ── Visual ───────────────────────────────────────────────────────────────
+  const [particles, setParticles]     = useState<Particle[]>([]);
+  const [floats, setFloats]           = useState<FloatingText[]>([]);
+  const floatId                       = useRef(0);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [panel, setPanel]             = useState<null|'settings'|'skins'|'achievements'|'scores'>(null);
+
+  // ── Refs ─────────────────────────────────────────────────────────────────
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const gameAreaRef = useRef<HTMLDivElement>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const animRef     = useRef<number>(0);
+  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const cdRef       = useRef<ReturnType<typeof setInterval>|null>(null);
+  const pulseRef    = useRef(0);
+  const rhRef       = useRef(0);
+
+  // Syncing refs guarantees no stale closures in the animation frame
+  const R = useRef({
+    snake:INIT_SNAKE, dir:'RIGHT' as Direction, food:{pos:randomCell(INIT_SNAKE),pulse:0},
+    bonus:null as {pos:Point;ttl:number}|null, pu:null as {pos:Point;type:PowerUpType;pulse:number}|null,
+    ap:null as {type:PowerUpType;ttl:number}|null, state:'IDLE' as GameState, score:0, diff:'NORMAL' as Difficulty,
+    ghost:false, shield:false, double:false, slow:false, mode: 'CLASSIC' as GameMode, eaten:0, combo:0,
+    particles:[] as Particle[], floats:[] as FloatingText[], skin: 'classic' as SkinId, themeKey: 'light' as ThemeKey,
+    showGrid: true, countdown: 3
   });
 
-  const [newAch, setNewAch] = useState<Achievement | null>(null);
-  const achTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { R.current.snake  = snake;       }, [snake]);
+  useEffect(() => { R.current.dir    = direction;   }, [direction]);
+  useEffect(() => { R.current.food   = food;        }, [food]);
+  useEffect(() => { R.current.bonus  = bonusFood;   }, [bonusFood]);
+  useEffect(() => { R.current.pu     = powerUp;     }, [powerUp]);
+  useEffect(() => { R.current.ap     = activePower; }, [activePower]);
+  useEffect(() => { R.current.state  = gameState;   }, [gameState]);
+  useEffect(() => { R.current.score  = score;       }, [score]);
+  useEffect(() => { R.current.diff   = difficulty;  }, [difficulty]);
+  useEffect(() => { R.current.ghost  = ghostMode;   }, [ghostMode]);
+  useEffect(() => { R.current.shield = shieldActive;}, [shieldActive]);
+  useEffect(() => { R.current.double = doubleScore; }, [doubleScore]);
+  useEffect(() => { R.current.slow   = slowActive;  }, [slowActive]);
+  useEffect(() => { R.current.mode   = gameMode;    }, [gameMode]);
+  useEffect(() => { R.current.eaten  = foodEaten;   }, [foodEaten]);
+  useEffect(() => { R.current.combo  = comboStreak; }, [comboStreak]);
+  useEffect(() => { R.current.particles = particles;}, [particles]);
+  useEffect(() => { R.current.floats = floats;      }, [floats]);
+  useEffect(() => { R.current.skin   = skin;        }, [skin]);
+  useEffect(() => { R.current.themeKey = themeKey;  }, [themeKey]);
+  useEffect(() => { R.current.showGrid = showGrid;  }, [showGrid]);
+  useEffect(() => { R.current.countdown = countdown;}, [countdown]);
 
-  const unlock = useCallback((id: string) => {
+  // ── Canvas sizing ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const measure = () => {
+      if (!gameAreaRef.current) return;
+      const r = gameAreaRef.current.getBoundingClientRect();
+      setCanvasScale(Math.min((r.width-2)/CS, (r.height-2)/CS, 2.5)); // Allow higher scaling
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (gameAreaRef.current) ro.observe(gameAreaRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // ── Animation & draw loop ─────────────────────────────────────────────────
+  useEffect(() => {
+    let af: number;
+    const loop = () => {
+      pulseRef.current += 0.08;
+      rhRef.current = (rhRef.current + 1.5) % 360;
+      
+      // Batch simple visual state updates for performance
+      setFood(prev => ({ ...prev, pulse: pulseRef.current }));
+      setPowerUp(prev => prev ? { ...prev, pulse: pulseRef.current } : null);
+      
+      setParticles(prev => prev
+        .map(p => ({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.07,life:p.life-0.024}))
+        .filter(p=>p.life>0)
+      );
+      setFloats(prev => prev.map(f=>({...f,y:f.y-0.85})).filter(f=>f.y>-20));
+
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) drawCanvas(ctx, {
+          snake:R.current.snake, food:R.current.food, bonusFood:R.current.bonus,
+          powerUp:R.current.pu, gameState:R.current.state, theme:THEMES[R.current.themeKey],
+          dark:R.current.themeKey === 'dark', skin:R.current.skin, countdown:R.current.countdown, 
+          particles:R.current.particles, floats:R.current.floats, ghostMode:R.current.ghost,
+          shieldActive:R.current.shield, rainbowHue:rhRef.current, showGrid:R.current.showGrid,
+        });
+      }
+      af = requestAnimationFrame(loop);
+    };
+    af = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(af);
+  }, []); // Empty array prevents restart jitter
+
+  // ── Achievement unlock ────────────────────────────────────────────────────
+  const unlock = useCallback((id:string) => {
     setAchievements(prev => {
-      if (prev.find(a => a.id === id)?.unlocked) return prev;
-      const next = prev.map(a => a.id === id ? { ...a, unlocked: true, ts: Date.now() } : a);
-      lsSet('sng_ach', JSON.stringify(next.filter(a => a.unlocked).map(a => ({ id: a.id, ts: a.ts }))));
-      const ach = next.find(a => a.id === id)!;
+      if (prev.find(a=>a.id===id)?.unlocked) return prev;
+      const next = prev.map(a => a.id===id ? {...a,unlocked:true,ts:Date.now()} : a);
+      lsSet('sng_ach', JSON.stringify(next.filter(a=>a.unlocked).map(a=>({id:a.id,ts:a.ts}))));
+      const ach = next.find(a=>a.id===id)!;
       setNewAch(ach);
       if (achTimerRef.current) clearTimeout(achTimerRef.current);
       achTimerRef.current = setTimeout(() => setNewAch(null), 3600);
@@ -649,1363 +494,759 @@ const SnakeGame: React.FC = () => {
     });
   }, []);
 
-  // ── Game ref (ALL mutable game state) ───────────────────────────────────
-  const INIT_SNAKE: Point[] = useMemo(() => [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }], []);
-
-  const gameRef = useRef({
-    snake: INIT_SNAKE,
-    direction: 'RIGHT' as Direction,
-    pendingDir: 'RIGHT' as Direction,
-    queuedDir: null as Direction | null,
-    inputLocked: false,
-    food: { pos: randomCell(INIT_SNAKE), pulse: 0 },
-    bonusFood: null as { pos: Point; ttl: number } | null,
-    powerUp: null as { pos: Point; type: PowerUpType; pulse: number } | null,
-    activePower: null as { type: PowerUpType; ttl: number } | null,
-    gameState: 'IDLE' as GameState,
-    score: 0,
-    level: 1,
-    countdown: 3,
-    countdownAcc: 0,
-    comboStreak: 0,
-    comboTimer: 0,
-    ghostMode: false,
-    shieldActive: false,
-    slowActive: false,
-    doubleScore: false,
-    totalTime: 0,
-    timeAcc: 0,
-    foodEaten: 0,
-    particles: [] as Particle[],
-    floats: [] as FloatingText[],
-    floatId: 0,
-    pulse: 0,
-    rainbowHue: 0,
-  });
-
-  // ── HUD state (only what React needs to render) ─────────────────────────
-  const defaultHud: HudState = {
-    score: 0, level: 1, length: 3, combo: 0, activePower: null,
-    ghostMode: false, shieldActive: false, slowActive: false,
-    doubleScore: false, totalTime: 0, foodEaten: 0,
-    gameState: 'IDLE', countdown: 3, highScore: 0,
-  };
-
-  const hudRef = useRef<HudState>(defaultHud);
-  const [hud, setHud] = useState<HudState>(defaultHud);
-
-  const syncUI = useCallback(() => {
-    const g = gameRef.current;
-    const next: HudState = {
-      score: g.score,
-      level: g.level,
-      length: g.snake.length,
-      combo: g.comboStreak,
-      activePower: g.activePower,
-      ghostMode: g.ghostMode,
-      shieldActive: g.shieldActive,
-      slowActive: g.slowActive,
-      doubleScore: g.doubleScore,
-      totalTime: g.totalTime,
-      foodEaten: g.foodEaten,
-      gameState: g.gameState,
-      countdown: g.countdown,
-      highScore: highScoresRef.current[difficulty] ?? 0,
-    };
-
-    const keys = Object.keys(next) as (keyof HudState)[];
-    const changed = keys.some(k => next[k] !== hudRef.current[k]);
-    if (changed) {
-      hudRef.current = next;
-      setHud(next);
-    }
-  }, [difficulty]);
-
-  // ── Panel state ─────────────────────────────────────────────────────────
-  const [panel, setPanel] = useState<null | 'settings' | 'skins' | 'achievements' | 'scores'>(null);
-
-  // ── Canvas ref ──────────────────────────────────────────────────────────
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const dprRef = useRef(Math.max(1, Math.min(window.devicePixelRatio || 1, 3)));
-
-  // Resize canvas buffer on DPR change
-  useEffect(() => {
-    const mq = window.matchMedia(`(resolution: ${dprRef.current}dppx)`);
-    const handler = () => {
-      dprRef.current = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
-    };
-    mq.addEventListener?.('change', handler);
-    return () => mq.removeEventListener?.('change', handler);
+  // ── Particles helper ──────────────────────────────────────────────────────
+  const burst = useCallback((x:number,y:number,color:string,n=13) => {
+    setParticles(prev => [...prev.slice(-90), ...Array.from({length:n},() => ({
+      x,y,vx:(Math.random()-0.5)*4.5,vy:(Math.random()-0.5)*4.5-0.8,
+      life:0.8+Math.random()*0.2,color,size:2+Math.random()*3,
+    }))]);
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = dprRef.current;
-    canvas.width = Math.round(LOGICAL_SIZE * dpr);
-    canvas.height = Math.round(LOGICAL_SIZE * dpr);
-    canvas.style.width = `${boardSize}px`;
-    canvas.style.height = `${boardSize}px`;
-  }, [boardSize]);
-
-  // ── Game logic helpers ──────────────────────────────────────────────────
-  const getTickRate = useCallback((sc: number, diff: Difficulty, slow: boolean): number => {
-    const { base, min, inc } = SPEED[diff];
-    const s = Math.max(min, base - Math.floor(sc / 5) * inc);
-    return slow ? Math.round(s * 1.65) : s;
+  const floatAdd = useCallback((x:number,y:number,text:string,color:string) => {
+    const id = ++floatId.current;
+    setFloats(prev => [...prev.slice(-10), {id,x,y,text,color}]);
   }, []);
 
-  const spawnParticles = useCallback((x: number, y: number, color: string, n = 13) => {
-    const g = gameRef.current;
-    const next = [...g.particles.slice(-90)];
-    for (let i = 0; i < n; i++) {
-      next.push({
-        x, y,
-        vx: (Math.random() - 0.5) * 4.5,
-        vy: (Math.random() - 0.5) * 4.5 - 0.8,
-        life: 0.8 + Math.random() * 0.2,
-        maxLife: 1,
-        color,
-        size: 2 + Math.random() * 3,
-      });
-    }
-    g.particles = next;
+  // ── Speed ─────────────────────────────────────────────────────────────────
+  const getSpeed = useCallback((sc:number, diff:Difficulty, slow:boolean):number => {
+    const {base,min,inc} = SPEED[diff];
+    const s = Math.max(min, base - Math.floor(sc/5)*inc);
+    return slow ? Math.round(s*1.65) : s;
   }, []);
 
-  const addFloat = useCallback((x: number, y: number, text: string, color: string) => {
-    const g = gameRef.current;
-    g.floatId++;
-    g.floats = [...g.floats.slice(-10), { id: g.floatId, x, y, text, color, life: 1 }];
-  }, []);
+  // ── Tick ──────────────────────────────────────────────────────────────────
+  const comboTimerRef = useRef<ReturnType<typeof setTimeout>|null>(null);
 
-  // ── Core tick (mutates gameRef, ZERO React re-renders) ──────────────────
   const tick = useCallback(() => {
-    const g = gameRef.current;
-    if (g.gameState !== 'RUNNING') return;
+    if (R.current.state !== 'RUNNING') return;
+    const cur=R.current.snake, d=pendDir.current, head=cur[0];
 
-    const cur = g.snake;
-    const d = g.pendingDir;
-    const head = cur[0];
+    let nx=head.x, ny=head.y;
+    if (d==='UP')    ny--;
+    if (d==='DOWN')  ny++;
+    if (d==='LEFT')  nx--;
+    if (d==='RIGHT') nx++;
 
-    let nx = head.x;
-    let ny = head.y;
-    if (d === 'UP') ny--;
-    if (d === 'DOWN') ny++;
-    if (d === 'LEFT') nx--;
-    if (d === 'RIGHT') nx++;
-
-    // Wall collision / wrap
-    if (gameMode === 'FREE_ROAM') {
-      nx = (nx + COLS) % COLS;
-      ny = (ny + ROWS) % ROWS;
-    } else if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) {
-      if (g.shieldActive) {
-        g.shieldActive = false;
-        nx = Math.max(0, Math.min(COLS - 1, nx));
-        ny = Math.max(0, Math.min(ROWS - 1, ny));
-        if (haptics) vibrate([40, 20, 40]);
+    // Game Mode Collision Logic
+    if (R.current.mode === 'FREE_ROAM') {
+      nx=(nx+COLS)%COLS; ny=(ny+ROWS)%ROWS;
+    } else if (nx<0||nx>=COLS||ny<0||ny>=ROWS) {
+      if (R.current.shield) {
+        setShieldActive(false);
+        nx=Math.max(0,Math.min(COLS-1,nx));
+        ny=Math.max(0,Math.min(ROWS-1,ny));
+        if (haptics) vibrate([40,20,40]);
         unlock('shield_used');
       } else {
-        if (haptics) vibrate([60, 40, 200]);
-        g.gameState = 'OVER';
-        soundRef.current.playDie();
+        if (haptics) vibrate([60,40,200]);
+        setGameState('OVER');
+        if (timerRef.current) clearInterval(timerRef.current);
         return;
       }
     }
 
-    const nh = { x: nx, y: ny };
+    const nh = {x:nx,y:ny};
 
     // Self collision
-    if (!g.ghostMode && cur.slice(0, -1).some(s => s.x === nx && s.y === ny)) {
-      if (g.shieldActive) {
-        g.shieldActive = false;
-        if (haptics) vibrate([40, 20, 40]);
+    if (!R.current.ghost && cur.slice(0,-1).some(s=>s.x===nx&&s.y===ny)) {
+      if (R.current.shield) {
+        setShieldActive(false);
+        if (haptics) vibrate([40,20,40]);
         unlock('shield_used');
       } else {
-        if (haptics) vibrate([60, 40, 200]);
-        g.gameState = 'OVER';
-        soundRef.current.playDie();
+        if (haptics) vibrate([60,40,200]);
+        setGameState('OVER');
+        if (timerRef.current) clearInterval(timerRef.current);
         return;
       }
     }
 
-    const ateMain = nh.x === g.food.pos.x && nh.y === g.food.pos.y;
-    const ateBonus = g.bonusFood && nh.x === g.bonusFood.pos.x && nh.y === g.bonusFood.pos.y;
-    const atePU = g.powerUp && nh.x === g.powerUp.pos.x && nh.y === g.powerUp.pos.y;
-    const newSnake = ateMain || ateBonus ? [nh, ...cur] : [nh, ...cur.slice(0, -1)];
+    const ateMain  = nh.x===R.current.food.pos.x && nh.y===R.current.food.pos.y;
+    const ateBonus = R.current.bonus && nh.x===R.current.bonus.pos.x && nh.y===R.current.bonus.pos.y;
+    const atePU    = R.current.pu && nh.x===R.current.pu.pos.x && nh.y===R.current.pu.pos.y;
 
-    // Consume queued direction
-    const nextQ = g.queuedDir;
-    if (nextQ && nextQ !== OPPOSITE[d] && nextQ !== d) {
-      g.pendingDir = nextQ;
-      g.queuedDir = null;
-      g.inputLocked = true;
-    } else {
-      g.inputLocked = false;
-    }
-
-    g.snake = newSnake;
-    g.direction = d;
+    const newSnake = ateMain||ateBonus ? [nh,...cur] : [nh,...cur.slice(0,-1)];
 
     if (ateMain) {
-      g.foodEaten++;
-      g.comboStreak++;
-      g.comboTimer = 2600;
+      const newEaten = R.current.eaten + 1;
+      setFoodEaten(newEaten);
+      const newCombo = R.current.combo + 1;
+      setComboStreak(newCombo);
+      if (comboTimerRef.current) clearTimeout(comboTimerRef.current);
+      comboTimerRef.current = setTimeout(() => setComboStreak(0), 2600);
 
-      const pts = (10 + (g.comboStreak > 1 ? g.comboStreak * 2 : 0)) * (g.doubleScore ? 2 : 1);
-      g.score += pts;
-      g.level = Math.floor(g.score / 50) + 1;
+      const pts = ((10 + (newCombo>1?newCombo*2:0)) * (R.current.double?2:1));
+      const newScore = R.current.score + pts;
+      const newLevel = Math.floor(newScore/50)+1;
+      setScore(newScore);
+      setLevel(newLevel);
 
-      const px = nh.x * LOGICAL_CELL + LOGICAL_CELL / 2;
-      const py = nh.y * LOGICAL_CELL + LOGICAL_CELL / 2;
-      spawnParticles(px, py, T.foodGlow, 14);
-      addFloat(px, py, g.comboStreak > 1 ? `+${pts} ×${g.comboStreak}` : `+${pts}`, isDark ? '#60efff' : '#0072ff');
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,THEMES[R.current.themeKey].foodGlow,14);
+      floatAdd(px,py, newCombo>1?`+${pts} ×${newCombo}`:`+${pts}`, R.current.themeKey==='dark'?'#60efff':'#0072ff');
       if (haptics) vibrate(7);
-      soundRef.current.playEat();
 
-      g.food = { pos: randomCell(newSnake), pulse: g.pulse };
+      setFood({ pos:randomCell(newSnake), pulse:pulseRef.current });
 
-      if (Math.random() < 0.22 && !g.bonusFood) {
-        g.bonusFood = { pos: randomCell(newSnake), ttl: 130 };
-      }
-      if (Math.random() < 0.13 && !g.powerUp) {
-        const types: PowerUpType[] = ['SHIELD', 'SLOW', 'DOUBLE', 'GHOST_MODE'];
-        g.powerUp = { pos: randomCell(newSnake), type: types[Math.floor(Math.random() * 4)], pulse: g.pulse };
+      if (Math.random()<0.22 && !R.current.bonus)
+        setBonusFood({pos:randomCell(newSnake),ttl:130});
+      if (Math.random()<0.13 && !R.current.pu) {
+        const types:PowerUpType[]=['SHIELD','SLOW','DOUBLE','GHOST_MODE'];
+        setPowerUp({pos:randomCell(newSnake),type:types[Math.floor(Math.random()*4)],pulse:pulseRef.current});
       }
 
-      // Persist high score
-      const best = highScoresRef.current[difficulty] ?? 0;
-      if (g.score > best) {
-        const next = { ...highScoresRef.current, [difficulty]: g.score };
-        highScoresRef.current = next;
-        setHighScores(next);
-        lsSet('sng_hs2', JSON.stringify(next));
-      }
-
-      // Persist level
+      setHighScores(prev => {
+        const best = prev[R.current.diff]??0;
+        if (newScore>best) {
+          const next={...prev,[R.current.diff]:newScore};
+          lsSet('sng_hs2',JSON.stringify(next)); return next;
+        }
+        return prev;
+      });
+      
       setSavedLevels(prev => {
-        const bestLevel = prev[gameMode] ?? 1;
-        if (g.level > bestLevel) {
-          const next = { ...prev, [gameMode]: g.level };
-          lsSet('sng_saved_levels', JSON.stringify(next));
-          return next;
+        const bestLevel = prev[R.current.mode]??1;
+        if (newLevel>bestLevel) {
+          const next={...prev,[R.current.mode]:newLevel};
+          lsSet('sng_saved_levels',JSON.stringify(next)); return next;
         }
         return prev;
       });
 
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(tick, getSpeed(newScore,R.current.diff,R.current.slow));
+
       // Achievements
-      if (g.foodEaten === 1) unlock('first_food');
-      if (g.score >= 50) unlock('score_50');
-      if (g.score >= 100) unlock('score_100');
-      if (g.score >= 250) unlock('score_250');
-      if (g.score >= 500) unlock('score_500');
-      if (newSnake.length >= 10) unlock('length_10');
-      if (newSnake.length >= 20) unlock('length_20');
-      if (g.comboStreak >= 5) unlock('combo_5');
-      if (g.score >= 100 && difficulty === 'TURBO') unlock('turbo_100');
-      if (g.score >= 250 && difficulty === 'CHILL') unlock('chill_250');
+      if (newEaten===1) unlock('first_food');
+      if (newScore>=50)  unlock('score_50');
+      if (newScore>=100) unlock('score_100');
+      if (newScore>=250) unlock('score_250');
+      if (newScore>=500) unlock('score_500');
+      if (newSnake.length>=10) unlock('length_10');
+      if (newSnake.length>=20) unlock('length_20');
+      if (newCombo>=5) unlock('combo_5');
+      if (newScore>=100&&R.current.diff==='TURBO') unlock('turbo_100');
+      if (newScore>=250&&R.current.diff==='CHILL') unlock('chill_250');
     }
 
-    if (ateBonus && g.bonusFood) {
-      g.bonusFood = null;
-      const pts = g.doubleScore ? 50 : 25;
-      g.score += pts;
-
-      const best = highScoresRef.current[difficulty] ?? 0;
-      if (g.score > best) {
-        const next = { ...highScoresRef.current, [difficulty]: g.score };
-        highScoresRef.current = next;
-        setHighScores(next);
-        lsSet('sng_hs2', JSON.stringify(next));
-      }
-
-      const px = nh.x * LOGICAL_CELL + LOGICAL_CELL / 2;
-      const py = nh.y * LOGICAL_CELL + LOGICAL_CELL / 2;
-      spawnParticles(px, py, '#ff00cc', 20);
-      addFloat(px, py, `+${pts}★`, '#ff00cc');
-      if (haptics) vibrate([8, 4, 8]);
-      soundRef.current.playBonus();
+    if (ateBonus) {
+      setBonusFood(null);
+      const pts=(doubleScore?50:25);
+      setScore(prev=>{
+        const n=prev+pts;
+        setHighScores(hs=>{
+          const b=hs[R.current.diff]??0;
+          if(n>b){const nx={...hs,[R.current.diff]:n};lsSet('sng_hs2',JSON.stringify(nx));return nx;}
+          return hs;
+        });
+        return n;
+      });
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,'#ff00cc',20);
+      floatAdd(px,py,`+${pts}★`,'#ff00cc');
+      if (haptics) vibrate([8,4,8]);
       unlock('bonus_food');
     }
 
-    if (atePU && g.powerUp) {
-      const pt = g.powerUp.type;
-      g.powerUp = null;
-      g.activePower = { type: pt, ttl: 200 };
-
-      const px = nh.x * LOGICAL_CELL + LOGICAL_CELL / 2;
-      const py = nh.y * LOGICAL_CELL + LOGICAL_CELL / 2;
-      spawnParticles(px, py, '#ffd200', 18);
-      const labs: Record<PowerUpType, string> = { SHIELD: '🛡 SHIELD!', SLOW: '🐢 SLOW-MO!', DOUBLE: '×2 DOUBLE!', GHOST_MODE: '👻 GHOST!' };
-      addFloat(px, py, labs[pt], '#ffd200');
-      if (haptics) vibrate([5, 3, 5, 3, 10]);
-      soundRef.current.playPowerUp();
-
-      if (pt === 'SHIELD') g.shieldActive = true;
-      if (pt === 'SLOW') g.slowActive = true;
-      if (pt === 'DOUBLE') g.doubleScore = true;
-      if (pt === 'GHOST_MODE') g.ghostMode = true;
+    if (atePU && R.current.pu) {
+      const pt=R.current.pu.type;
+      setPowerUp(null);
+      setActivePower({type:pt,ttl:200});
+      const px=nh.x*CELL+CELL/2, py=nh.y*CELL+CELL/2;
+      burst(px,py,'#ffd200',18);
+      const labs:Record<PowerUpType,string>={SHIELD:'🛡 SHIELD!',SLOW:'🐢 SLOW-MO!',DOUBLE:'×2 DOUBLE!',GHOST_MODE:'👻 GHOST!'};
+      floatAdd(px,py,labs[pt],'#ffd200');
+      if (haptics) vibrate([5,3,5,3,10]);
+      if (pt==='SHIELD')     setShieldActive(true);
+      if (pt==='SLOW')       setSlowActive(true);
+      if (pt==='DOUBLE')     setDoubleScore(true);
+      if (pt==='GHOST_MODE') setGhostMode(true);
       unlock('power_up');
     }
 
-    // Bonus food timer
-    if (g.bonusFood) {
-      g.bonusFood.ttl--;
-      if (g.bonusFood.ttl <= 0) g.bonusFood = null;
+    // Decay bonus food
+    if (R.current.bonus) {
+      const ttl = R.current.bonus.ttl - 1;
+      if (ttl<=0) setBonusFood(null);
+      else setBonusFood({...R.current.bonus,ttl});
     }
 
-    // Active power-up timer
-    if (g.activePower) {
-      g.activePower.ttl--;
-      if (g.activePower.ttl <= 0) {
-        const tp = g.activePower.type;
-        if (tp === 'SHIELD') g.shieldActive = false;
-        if (tp === 'SLOW') g.slowActive = false;
-        if (tp === 'DOUBLE') g.doubleScore = false;
-        if (tp === 'GHOST_MODE') g.ghostMode = false;
-        g.activePower = null;
-      }
+    // Decay active power
+    if (R.current.ap) {
+      const ttl = R.current.ap.ttl - 1;
+      if (ttl<=0) {
+        const tp=R.current.ap.type;
+        if (tp==='SHIELD')     setShieldActive(false);
+        if (tp==='SLOW')       { setSlowActive(false); if(intervalRef.current)clearInterval(intervalRef.current); intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,false)); }
+        if (tp==='DOUBLE')     setDoubleScore(false);
+        if (tp==='GHOST_MODE') setGhostMode(false);
+        setActivePower(null);
+      } else setActivePower({...R.current.ap,ttl});
     }
 
-    // Combo timer
-    if (g.comboTimer > 0) {
-      g.comboTimer -= getTickRate(g.score, difficulty, g.slowActive);
-      if (g.comboTimer <= 0) g.comboStreak = 0;
-    }
-  }, [gameMode, difficulty, haptics, isDark, T.foodGlow, unlock, spawnParticles, addFloat, getTickRate]);
+    setDirection(d);
+    setSnake(newSnake);
+  }, [burst, floatAdd, getSpeed, haptics, unlock]);
 
-  // ── Start / Reset ───────────────────────────────────────────────────────
+  // ── Start / countdown ────────────────────────────────────────────────────
   const startGame = useCallback(() => {
-    const g = gameRef.current;
-    g.snake = INIT_SNAKE;
-    g.direction = 'RIGHT';
-    g.pendingDir = 'RIGHT';
-    g.queuedDir = null;
-    g.inputLocked = false;
-    g.food = { pos: randomCell(INIT_SNAKE), pulse: 0 };
-    g.bonusFood = null;
-    g.powerUp = null;
-    g.activePower = null;
-    g.gameState = 'COUNTDOWN';
-    g.score = 0;
-    g.level = 1;
-    g.countdown = 3;
-    g.countdownAcc = 0;
-    g.comboStreak = 0;
-    g.comboTimer = 0;
-    g.ghostMode = false;
-    g.shieldActive = false;
-    g.slowActive = false;
-    g.doubleScore = false;
-    g.totalTime = 0;
-    g.timeAcc = 0;
-    g.foodEaten = 0;
-    g.particles = [];
-    g.floats = [];
-    g.pulse = 0;
-    soundRef.current.playTick();
-    syncUI();
-  }, [INIT_SNAKE, syncUI]);
+    [intervalRef,timerRef,cdRef].forEach(r => { if(r.current){clearInterval(r.current);r.current=null;} });
+
+    setSnake(INIT_SNAKE); setFood({pos:randomCell(INIT_SNAKE),pulse:0});
+    setBonusFood(null); setPowerUp(null); setActivePower(null);
+    setDirection('RIGHT'); pendDir.current='RIGHT';
+    setScore(0); setLevel(1); setFoodEaten(0); setComboStreak(0);
+    setGhostMode(false); setShieldActive(false); setSlowActive(false); setDoubleScore(false);
+    setTotalTime(0); setParticles([]); setFloats([]);
+
+    timerRef.current = setInterval(() => {
+      setTotalTime(p => { if(p>=60) unlock('survive_60'); return p+1; });
+    }, 1000);
+
+    let n=3; setCountdown(n); setGameState('COUNTDOWN');
+    cdRef.current = setInterval(() => {
+      n--; setCountdown(n);
+      if (n<=0) {
+        clearInterval(cdRef.current!);
+        setGameState('RUNNING');
+        intervalRef.current = setInterval(tick, SPEED[R.current.diff].base);
+      }
+    }, 800);
+  }, [tick, unlock]);
 
   const togglePause = useCallback(() => {
-    const g = gameRef.current;
-    if (g.gameState === 'RUNNING') {
-      g.gameState = 'PAUSED';
-    } else if (g.gameState === 'PAUSED') {
-      g.gameState = 'RUNNING';
-    }
-    syncUI();
-  }, [syncUI]);
-
-  // ── Input handling ──────────────────────────────────────────────────────
-  const requestDirection = useCallback((next: Direction, vibratePattern?: number | number[]) => {
-    const g = gameRef.current;
-    const intended = g.inputLocked ? g.pendingDir : g.direction;
-    if (next === intended || next === g.queuedDir) return false;
-    if (next === OPPOSITE[intended]) return false;
-
-    if (!g.inputLocked) {
-      g.pendingDir = next;
-      g.queuedDir = null;
-      g.inputLocked = true;
-      if (haptics && vibratePattern !== undefined) vibrate(vibratePattern);
-      soundRef.current.playTick();
-      return true;
-    }
-    if (!g.queuedDir && next !== OPPOSITE[g.pendingDir]) {
-      g.queuedDir = next;
-      if (haptics && vibratePattern !== undefined) vibrate(vibratePattern);
-      soundRef.current.playTick();
-      return true;
-    }
-    return false;
-  }, [haptics]);
-
-  // Keyboard
-  useEffect(() => {
-    const km: Record<string, Direction> = {
-      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
-      w: 'UP', s: 'DOWN', a: 'LEFT', d: 'RIGHT',
-      W: 'UP', S: 'DOWN', A: 'LEFT', D: 'RIGHT',
-    };
-    const h = (e: KeyboardEvent) => {
-      if ([' ', 'Escape', 'p', 'P'].includes(e.key)) {
-        e.preventDefault();
-        const g = gameRef.current;
-        if (g.gameState === 'RUNNING' || g.gameState === 'PAUSED') togglePause();
-        return;
+    setGameState(g => {
+      if (g==='RUNNING') {
+        if(intervalRef.current)clearInterval(intervalRef.current);
+        if(timerRef.current)clearInterval(timerRef.current);
+        return 'PAUSED';
       }
-      if (e.key === 'Enter' && (gameRef.current.gameState === 'IDLE' || gameRef.current.gameState === 'OVER')) {
-        startGame();
-        return;
+      if (g==='PAUSED') {
+        timerRef.current=setInterval(()=>setTotalTime(p=>p+1),1000);
+        intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,R.current.slow));
+        return 'RUNNING';
       }
-      const nd = km[e.key];
-      if (nd) {
-        e.preventDefault();
-        requestDirection(nd);
-      }
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [requestDirection, togglePause, startGame]);
+      return g;
+    });
+  }, [tick,getSpeed]);
 
-  // Swipe handling (Pointer events for universal touch/mouse support)
-  const swipeOriginRef = useRef<{ x: number; y: number } | null>(null);
-  const swipeHandledRef = useRef(false);
-
-  const SWIPE_THRESHOLD = useMemo(() => Math.max(20, Math.round(boardSize * 0.07)), [boardSize]);
-  const AXIS_RATIO = 1.3;
-
-  const trySwipe = useCallback((dx: number, dy: number) => {
-    const absX = Math.abs(dx);
-    const absY = Math.abs(dy);
-    const dominant = Math.max(absX, absY);
-    const weaker = Math.min(absX, absY);
-    if (dominant < SWIPE_THRESHOLD) return false;
-    if (weaker > dominant / AXIS_RATIO) return false;
-    const nd: Direction = absX > absY ? (dx > 0 ? 'RIGHT' : 'LEFT') : (dy > 0 ? 'DOWN' : 'UP');
-    return requestDirection(nd, 6);
-  }, [SWIPE_THRESHOLD, requestDirection]);
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.pointerType === 'touch') {
-      swipeOriginRef.current = { x: e.clientX, y: e.clientY };
-      swipeHandledRef.current = false;
-    }
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!swipeOriginRef.current || swipeHandledRef.current) return;
-    const dx = e.clientX - swipeOriginRef.current.x;
-    const dy = e.clientY - swipeOriginRef.current.y;
-    if (trySwipe(dx, dy)) {
-      swipeHandledRef.current = true;
-      swipeOriginRef.current = { x: e.clientX, y: e.clientY };
-    }
-  }, [trySwipe]);
-
-  const onPointerUp = useCallback((e: React.PointerEvent) => {
-    if (!swipeOriginRef.current) return;
-    if (!swipeHandledRef.current) {
-      trySwipe(e.clientX - swipeOriginRef.current.x, e.clientY - swipeOriginRef.current.y);
-    }
-    swipeOriginRef.current = null;
-    swipeHandledRef.current = false;
-  }, [trySwipe]);
-
-  // D-pad
-  const [pressedDir, setPressedDir] = useState<Direction | null>(null);
-  const holdRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const dStart = useCallback((d: Direction) => {
-    if (holdRef.current) clearInterval(holdRef.current);
-    setPressedDir(d);
-    requestDirection(d, 8);
-    holdRef.current = setInterval(() => requestDirection(d), 130);
-  }, [requestDirection]);
-
-  const dEnd = useCallback(() => {
-    setPressedDir(null);
-    if (holdRef.current) {
-      clearInterval(holdRef.current);
-      holdRef.current = null;
-    }
-  }, []);
-
-  // Cleanup
   useEffect(() => () => {
-    if (holdRef.current) clearInterval(holdRef.current);
-    if (achTimerRef.current) clearTimeout(achTimerRef.current);
+    [intervalRef,timerRef,cdRef].forEach(r=>{if(r.current)clearInterval(r.current);});
+    cancelAnimationFrame(animRef.current);
   }, []);
 
-  // ── MAIN GAME LOOP (requestAnimationFrame + delta time) ─────────────────
   useEffect(() => {
-    let af: number;
-    let lastTime = performance.now();
+    if (R.current.state==='RUNNING') {
+      if(intervalRef.current)clearInterval(intervalRef.current);
+      intervalRef.current=setInterval(tick,getSpeed(R.current.score,R.current.diff,R.current.slow));
+    }
+  }, [tick,getSpeed]);
 
-    const loop = (now: number) => {
-      // Skip when tab is hidden to save battery
-      if (document.hidden) {
-        af = requestAnimationFrame(loop);
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    const km:Record<string,Direction>={
+      ArrowUp:'UP',ArrowDown:'DOWN',ArrowLeft:'LEFT',ArrowRight:'RIGHT',
+      w:'UP',s:'DOWN',a:'LEFT',d:'RIGHT',W:'UP',S:'DOWN',A:'LEFT',D:'RIGHT',
+    };
+    const h = (e:KeyboardEvent) => {
+      if ([' ','Escape','p','P'].includes(e.key)) {
+        e.preventDefault();
+        if (R.current.state==='RUNNING'||R.current.state==='PAUSED') togglePause();
         return;
       }
-
-      const delta = now - lastTime;
-      lastTime = now;
-      const g = gameRef.current;
-
-      // Update visual animations (runs every frame at 60 FPS)
-      g.pulse += 0.08;
-      g.rainbowHue = (g.rainbowHue + 1.5) % 360;
-
-      // Update particles
-      g.particles = g.particles
-        .map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.07, life: p.life - 0.024 }))
-        .filter(p => p.life > 0);
-
-      // Update floats
-      g.floats = g.floats
-        .map(f => ({ ...f, y: f.y - 0.85 }))
-        .filter(f => f.y > -20);
-
-      // Countdown logic
-      if (g.gameState === 'COUNTDOWN') {
-        g.countdownAcc += delta;
-        if (g.countdownAcc >= 800) {
-          g.countdownAcc -= 800;
-          g.countdown--;
-          if (g.countdown <= 0) {
-            g.gameState = 'RUNNING';
-            g.countdown = 0;
-          } else {
-            soundRef.current.playTick();
-          }
-          syncUI();
-        }
-      }
-
-      // One-second timer
-      if (g.gameState === 'RUNNING') {
-        g.timeAcc += delta;
-        if (g.timeAcc >= 1000) {
-          g.timeAcc -= 1000;
-          g.totalTime++;
-          if (g.totalTime >= 60) unlock('survive_60');
-        }
-      }
-
-      // Game tick accumulator
-      if (g.gameState === 'RUNNING') {
-        const tickRate = getTickRate(g.score, difficulty, g.slowActive);
-        g.lastTick = (g.lastTick || 0) + delta;
-        while (g.lastTick >= tickRate) {
-          tick();
-          g.lastTick -= tickRate;
-        }
-      }
-
-      // Sync UI only when needed
-      if (g.gameState !== 'COUNTDOWN') {
-        syncUI();
-      }
-
-      // Draw canvas
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          const dpr = dprRef.current;
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          drawCanvas(ctx, {
-            snake: g.snake,
-            food: { ...g.food, pulse: g.pulse },
-            bonusFood: g.bonusFood,
-            powerUp: g.powerUp ? { ...g.powerUp, pulse: g.pulse } : null,
-            gameState: g.gameState,
-            theme: T,
-            dark: isDark,
-            skin,
-            countdown: g.countdown,
-            particles: g.particles,
-            floats: g.floats,
-            ghostMode: g.ghostMode,
-            shieldActive: g.shieldActive,
-            rainbowHue: g.rainbowHue,
-            showGrid,
-          });
-        }
-      }
-
-      af = requestAnimationFrame(loop);
+      if (e.key==='Enter' && (R.current.state==='IDLE'||R.current.state==='OVER')) { startGame(); return; }
+      const nd=km[e.key];
+      if (nd&&nd!==opp[R.current.dir]) { e.preventDefault(); pendDir.current=nd; }
     };
+    window.addEventListener('keydown',h);
+    return ()=>window.removeEventListener('keydown',h);
+  }, [togglePause,startGame]);
 
-    af = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(af);
-  }, [T, isDark, skin, showGrid, difficulty, tick, syncUI, getTickRate, unlock]);
-
-  // ── Derived values ──────────────────────────────────────────────────────
-  const isRunning = hud.gameState === 'RUNNING';
-  const isOver = hud.gameState === 'OVER';
-  const isIdle = hud.gameState === 'IDLE';
-  const isPaused = hud.gameState === 'PAUSED';
-  const isCounting = hud.gameState === 'COUNTDOWN';
-  const unlockedCnt = achievements.filter(a => a.unlocked).length;
-
-  const dPadBtnSize = Math.max(46, Math.min(64, vw * 0.12));
-
-  const speedLabel = useMemo(() => {
-    const { base, inc } = SPEED[difficulty];
-    return Math.round((base - getTickRate(hud.score, difficulty, hud.slowActive)) / inc + 1);
-  }, [hud.score, difficulty, hud.slowActive, getTickRate]);
-
-  // ── Styles ──────────────────────────────────────────────────────────────
-  const rootGradient = isDark
-    ? 'radial-gradient(circle at top left, rgba(96,239,255,0.20), transparent 34%), radial-gradient(circle at bottom right, rgba(255,0,204,0.16), transparent 30%), linear-gradient(145deg,#040511 0%,#0c1028 42%,#140a20 100%)'
-    : 'radial-gradient(circle at top left, rgba(0,198,255,0.18), transparent 34%), radial-gradient(circle at bottom right, rgba(255,99,146,0.16), transparent 30%), linear-gradient(145deg,#f7fffe 0%,#eef5ff 45%,#edf3ff 100%)';
-
-  const glassPanel: React.CSSProperties = {
-    background: isDark ? 'rgba(11,16,36,0.58)' : 'rgba(255,255,255,0.58)',
-    border: `1px solid ${isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.72)'}`,
-    boxShadow: isDark
-      ? '0 18px 44px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)'
-      : '0 20px 40px rgba(90,125,170,0.16), inset 0 1px 0 rgba(255,255,255,0.85)',
-    backdropFilter: 'blur(24px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+  // ── Swipe ────────────────────────────────────────────────────────────────
+  const tsRef = useRef<{x:number;y:number}|null>(null);
+  const onTouchStart = (e:React.TouchEvent) => { tsRef.current={x:e.touches[0].clientX,y:e.touches[0].clientY}; };
+  const onTouchEnd = (e:React.TouchEvent) => {
+    if (!tsRef.current) return;
+    const dx=e.changedTouches[0].clientX-tsRef.current.x, dy=e.changedTouches[0].clientY-tsRef.current.y;
+    if (Math.abs(dx)<12&&Math.abs(dy)<12) return;
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    const nd:Direction=Math.abs(dx)>Math.abs(dy)?(dx>0?'RIGHT':'LEFT'):(dy>0?'DOWN':'UP');
+    if(nd!==opp[R.current.dir]) pendDir.current=nd;
+    tsRef.current=null;
   };
 
-  const softInset = isDark
-    ? 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -10px 30px rgba(0,0,0,0.22)'
-    : 'inset 0 1px 0 rgba(255,255,255,0.86), inset 0 -14px 30px rgba(123,161,214,0.12)';
+  // ── D-pad ────────────────────────────────────────────────────────────────
+  const [pressedDir, setPressedDir] = useState<Direction|null>(null);
+  const holdRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const dStart = (d:Direction) => {
+    const opp:Record<Direction,Direction>={UP:'DOWN',DOWN:'UP',LEFT:'RIGHT',RIGHT:'LEFT'};
+    setPressedDir(d);
+    if(d!==opp[R.current.dir]) pendDir.current=d;
+    if(haptics) vibrate(4);
+    holdRef.current=setInterval(()=>{if(d!==opp[R.current.dir])pendDir.current=d;},100);
+  };
+  const dEnd = () => { setPressedDir(null); if(holdRef.current)clearInterval(holdRef.current); };
 
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const highScore   = highScores[difficulty] ?? 0;
+  const isRunning   = gameState==='RUNNING';
+  const isOver      = gameState==='OVER';
+  const isIdle      = gameState==='IDLE';
+  const isPaused    = gameState==='PAUSED';
+  const isCounting  = gameState==='COUNTDOWN';
+  const isExpanded  = !isIdle; // Triggers full-screen UI expansion
+  
+  const speedLabel  = useMemo(() => {
+    const {base,inc}=SPEED[difficulty];
+    return Math.round((base-getSpeed(score,difficulty,slowActive))/inc+1);
+  }, [score,difficulty,slowActive,getSpeed]);
+  const unlockedCnt = achievements.filter(a=>a.unlocked).length;
+
+  // ── Inline styles (Miniaturized for larger canvas) ──────────────────────
   const btnPri: React.CSSProperties = {
-    background: T.btnPri,
-    color: T.btnPriTxt,
-    border: 'none',
-    borderRadius: '14px',
-    fontFamily: "'Orbitron',monospace",
-    fontWeight: 800,
-    fontSize: isTiny ? '10px' : isCompact ? '11px' : '12px',
-    letterSpacing: '0.12em',
-    padding: isTiny ? '9px 12px' : isCompact ? '10px 14px' : '11px 20px',
-    cursor: 'pointer',
-    boxShadow: isDark
-      ? `0 18px 34px ${T.uiAccent2}20, inset 0 1px 0 rgba(255,255,255,0.18)`
-      : '0 16px 30px rgba(0,114,255,0.18), inset 0 1px 0 rgba(255,255,255,0.55)',
-    transition: 'transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease',
+    background:T.btnPri, color:T.btnPriTxt, border:'none',
+    borderRadius:'8px', fontFamily:"'Orbitron',monospace", fontWeight:700,
+    fontSize:'11px', letterSpacing:'0.08em', padding:'8px 18px',
+    cursor:'pointer', boxShadow:isDark?`0 0 18px ${T.uiAccent2}44`:'0 4px 14px rgba(0,114,255,0.22)',
+    transition:'all 0.18s',
   };
-
   const btnSec: React.CSSProperties = {
-    background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.55)',
-    color: T.btnSecTxt,
-    border: `1px solid ${T.btnSecBdr}`,
-    borderRadius: '14px',
-    fontFamily: "'Orbitron',monospace",
-    fontWeight: 700,
-    fontSize: isTiny ? '10px' : isCompact ? '11px' : '12px',
-    letterSpacing: '0.1em',
-    padding: isTiny ? '8px 10px' : isCompact ? '9px 12px' : '10px 16px',
-    cursor: 'pointer',
-    transition: 'transform 0.18s ease, background 0.18s ease',
-    backdropFilter: 'blur(12px)',
+    background:T.btnSec, color:T.btnSecTxt, border:`1.5px solid ${T.btnSecBdr}`,
+    borderRadius:'8px', fontFamily:"'Orbitron',monospace", fontWeight:700,
+    fontSize:'11px', letterSpacing:'0.08em', padding:'7px 14px',
+    cursor:'pointer', transition:'all 0.18s',
   };
-
   const scoreBox: React.CSSProperties = {
-    background: isDark
-      ? 'linear-gradient(180deg, rgba(20,26,52,0.70), rgba(8,10,26,0.72))'
-      : 'linear-gradient(180deg, rgba(255,255,255,0.78), rgba(243,248,255,0.86))',
-    border: `1px solid ${T.border}`,
-    borderRadius: '16px',
-    padding: isTiny ? '8px 10px' : isCompact ? '10px 12px' : '12px 14px',
-    textAlign: 'center',
-    boxShadow: `${glassPanel.boxShadow}, ${softInset}`,
+    background:T.scoreBg, border:`1px solid ${T.border}`,
+    borderRadius:'6px', padding:'3px 6px', textAlign:'center', // Shrunk padding & radius
+  };
+  const iconBtn: React.CSSProperties = {
+    background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'6px', // Shrunk padding & radius
+    color:T.uiSub, cursor:'pointer', padding:'4px 6px', fontSize:'12px',
+    lineHeight:'1', display:'flex', alignItems:'center', gap:'3px', transition:'all 0.15s',
   };
 
-  // ── Panel components ────────────────────────────────────────────────────
+  // ── Panel renderer ────────────────────────────────────────────────────────
   const PanelShell = ({ children }: { children: React.ReactNode }) => (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: isDark ? 'rgba(6,8,20,0.82)' : 'rgba(240,247,255,0.78)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '16px 12px', overflowY: 'auto', gap: '10px',
-      backdropFilter: 'blur(24px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-      paddingTop: 'max(16px, env(safe-area-inset-top))',
-      paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
-    }}>
-      {children}
-    </div>
+      position:'fixed', inset:0, zIndex:100,
+      background:isDark?'rgba(6,6,20,0.97)':'rgba(245,249,255,0.97)',
+      display:'flex', flexDirection:'column', alignItems:'center',
+      padding:'20px 16px', overflowY:'auto', gap:'10px',
+      backdropFilter:'blur(14px)',
+    }}>{children}</div>
   );
 
-  const panelTitle = (txt: string) => (
-    <h2 style={{
-      fontFamily: "'Orbitron',monospace", color: T.uiAccent, margin: 0,
-      letterSpacing: '0.14em', fontSize: 'clamp(15px,4vw,20px)', textTransform: 'uppercase',
-      textShadow: isDark ? `0 0 24px ${T.uiAccent}55` : '0 8px 22px rgba(0,114,255,0.16)',
-    }}>
-      {txt}
-    </h2>
+  const panelTitle = (txt:string) => (
+    <h2 style={{ fontFamily:"'Orbitron',monospace", color:T.uiAccent, margin:0, letterSpacing:'0.1em', fontSize:'clamp(16px,4vw,22px)' }}>{txt}</h2>
   );
 
-  const DBtn = ({ d, lbl, ariaLabel }: { d: Direction; lbl: string; ariaLabel: string }) => (
-    <button
-      type="button"
-      aria-label={ariaLabel}
+  // Miniaturized Dpad button
+  const DBtn = ({ d, lbl }:{d:Direction;lbl:string}) => (
+    <div
       style={{
-        width: dPadBtnSize,
-        height: dPadBtnSize,
-        borderRadius: '12px',
-        background: pressedDir === d ? `${T.uiAccent}33` : (isDark ? 'rgba(18,24,46,0.72)' : 'rgba(255,255,255,0.72)'),
-        border: `1.5px solid ${pressedDir === d ? T.uiAccent : T.border}`,
-        color: pressedDir === d ? T.uiAccent : T.uiSub,
-        fontSize: isTiny ? '16px' : '18px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        transition: 'all 0.08s',
-        userSelect: 'none',
-        WebkitTapHighlightColor: 'transparent',
-        touchAction: 'none',
-        boxShadow: pressedDir === d
-          ? `0 10px 22px ${T.uiAccent}22, inset 0 1px 0 rgba(255,255,255,0.18)`
-          : `${softInset}, 0 8px 18px rgba(0,0,0,0.08)`,
-        backdropFilter: 'blur(16px)',
+        width:38, height:38, borderRadius:'8px', // Smaller dimensions
+        background:pressedDir===d?`${T.uiAccent}28`:T.scoreBg,
+        border:`1.5px solid ${pressedDir===d?T.uiAccent:T.border}`,
+        color:pressedDir===d?T.uiAccent:T.uiSub, fontSize:'14px',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        cursor:'pointer', transition:'all 0.08s', userSelect:'none',
+        WebkitTapHighlightColor:'transparent',
+        boxShadow:pressedDir===d&&isDark?`0 0 12px ${T.uiAccent}55`:'none',
       }}
-      onPointerDown={(e) => { e.preventDefault(); dStart(d); }}
-      onPointerUp={dEnd}
-      onPointerLeave={dEnd}
-      onPointerCancel={dEnd}
-    >
-      {lbl}
-    </button>
+      onMouseDown={()=>dStart(d)} onMouseUp={dEnd} onMouseLeave={dEnd}
+      onTouchStart={e=>{e.preventDefault();dStart(d);}} onTouchEnd={dEnd}
+    >{lbl}</div>
   );
 
-  // ═════════════════════════════════════════════════════════════════════════
-  // RENDER
-  // ═════════════════════════════════════════════════════════════════════════
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
-        *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-        html { height: 100%; }
-        body { height: 100%; overflow: hidden; overscroll-behavior: none; position: fixed; width: 100%; }
-        #root { width:100%; height:100%; }
-        button { outline:none; -webkit-tap-highlight-color:transparent; }
-        button:active { transform:scale(0.93); }
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+        html,body,#root{width:100%;height:100%;overflow:hidden;}
+        button{outline:none;-webkit-tap-highlight-color:transparent;}
+        button:active{transform:scale(0.92);}
         @keyframes achSlide{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
         @keyframes pulseGlow{0%,100%{opacity:0.8;}50%{opacity:1;}}
-        @keyframes floatOrb{0%,100%{transform:translate3d(0,0,0) scale(1);}50%{transform:translate3d(0,-16px,0) scale(1.06);}}
-        @keyframes softSpin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
-        @keyframes staggerIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
-        ::-webkit-scrollbar{width:3px;}
-        ::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px;}
+        ::-webkit-scrollbar{width:4px;}
+        ::-webkit-scrollbar-thumb{background:${T.border};border-radius:4px;}
       `}</style>
 
+      {/* ROOT */}
       <div style={{
-        position: 'fixed', inset: 0,
-        background: rootGradient,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'Rajdhani',sans-serif",
-        overflow: 'hidden',
-        transition: 'background 0.5s',
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-        paddingLeft: 'env(safe-area-inset-left)',
-        paddingRight: 'env(safe-area-inset-right)',
+        position:'fixed', inset:0,
+        background:isDark
+          ? `linear-gradient(135deg,${T.bg[0]},${T.bg[1]},${T.bg[2]})`
+          : `linear-gradient(135deg,${T.bg[0]},${T.bg[1]},${T.bg[2]})`,
+        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+        fontFamily:"'Rajdhani',sans-serif", overflow:'hidden', transition:'background 0.5s',
       }}>
-        {/* Ambient orbs */}
+        {/* Dynamic Wrapper: Expands to full screen when playing */}
         <div style={{
-          position: 'absolute', inset: '-8% auto auto -12%', width: '42vw', height: '42vw',
-          minWidth: 180, minHeight: 180, borderRadius: '50%',
-          background: isDark ? 'rgba(96,239,255,0.13)' : 'rgba(0,198,255,0.14)',
-          filter: 'blur(22px)', animation: 'floatOrb 9s ease-in-out infinite', pointerEvents: 'none',
-        }} />
-        <div style={{
-          position: 'absolute', inset: 'auto -10% -14% auto', width: '38vw', height: '38vw',
-          minWidth: 180, minHeight: 180, borderRadius: '50%',
-          background: isDark ? 'rgba(255,0,204,0.12)' : 'rgba(255,120,120,0.12)',
-          filter: 'blur(24px)', animation: 'floatOrb 12s ease-in-out infinite reverse', pointerEvents: 'none',
-        }} />
-
-        {/* Main shell */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', width: '100%', height: '100%',
-          maxWidth: isLandscape ? '900px' : '580px',
-          padding: isTiny ? '6px' : isCompact ? '8px' : '10px 12px',
-          gap: isTiny ? '4px' : isCompact ? '5px' : '7px',
-          alignItems: 'stretch', position: 'relative', zIndex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
+          display:'flex', flexDirection:'column', width:'100%', height:'100%',
+          maxWidth: isExpanded ? '100%' : '560px', 
+          padding: isExpanded ? '6px 8px' : '6px 8px', // Smaller padding
+          gap:'4px', alignItems:'stretch',
+          transition: 'max-width 0.4s cubic-bezier(0.16, 1, 0.3, 1), padding 0.4s ease'
         }}>
-          {/* Top Bar */}
-          <div style={{
-            ...glassPanel,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: '6px', flexShrink: 0, flexWrap: 'nowrap',
-            padding: isTiny ? '10px' : isCompact ? '10px 12px' : '12px 16px',
-            borderRadius: '20px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+
+          {/* ── TOP BAR (Miniaturized) ─────────────────────────────────────────────── */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'6px', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'5px' }}>
               <h1 style={{
-                fontFamily: "'Orbitron',monospace", fontWeight: 900,
-                fontSize: isTiny ? '14px' : isCompact ? '16px' : 'clamp(16px,3.4vw,22px)',
-                color: T.uiAccent, letterSpacing: '0.2em',
-                textShadow: isDark ? `0 0 22px ${T.uiAccent}99` : '0 10px 24px rgba(0,114,255,0.18)',
-                margin: 0, flexShrink: 0,
-              }}>
-                SNAKE
-              </h1>
+                fontFamily:"'Orbitron',monospace", fontWeight:900,
+                fontSize:'clamp(14px,3vw,20px)', color:T.uiAccent, // Smaller text
+                letterSpacing:'0.18em', textShadow:isDark?`0 0 22px ${T.uiAccent}99`:'none', margin:0
+              }}>SNAKE</h1>
               <span style={{
-                fontFamily: "'Orbitron',monospace", fontSize: '9px', fontWeight: 700,
-                color: T.uiAccent2, background: `${T.uiAccent2}18`,
-                border: `1px solid ${T.uiAccent2}44`, borderRadius: '999px',
-                padding: '3px 6px', flexShrink: 0,
-              }}>
-                LV{hud.level}
-              </span>
+                fontFamily:"'Orbitron',monospace", fontSize:'9px', fontWeight:700,
+                color:T.uiAccent2, background:`${T.uiAccent2}18`,
+                border:`1px solid ${T.uiAccent2}44`, borderRadius:'4px', padding:'1px 4px',
+              }}>LV{level}</span>
               {gameMode === 'FREE_ROAM' && (
-                <span style={{
-                  fontSize: '8px', color: T.uiAccent2, fontWeight: 700,
-                  background: `${T.uiAccent2}14`, border: `1px solid ${T.uiAccent2}33`,
-                  borderRadius: '4px', padding: '1px 4px', flexShrink: 0,
-                }}>
-                  🌀WRAP
-                </span>
+                <span style={{ fontSize:'9px', color:T.uiAccent2, fontWeight:700,
+                  background:`${T.uiAccent2}14`, border:`1px solid ${T.uiAccent2}33`,
+                  borderRadius:'4px', padding:'1px 4px' }}>🌀WRAP</span>
               )}
             </div>
-            <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+            <div style={{ display:'flex', gap:'3px' }}>
               {[
-                { icon: '🎨', tip: 'Skins', p: 'skins' as const },
-                { icon: '🏆', tip: 'Achievements', p: 'achievements' as const },
-                { icon: '📊', tip: 'Scores', p: 'scores' as const },
-                { icon: '⚙️', tip: 'Settings', p: 'settings' as const },
+                { icon:'🎨', tip:'Skins',        p:'skins'        as const },
+                { icon:'🏆', tip:'Achievements', p:'achievements' as const },
+                { icon:'📊', tip:'Scores',       p:'scores'       as const },
+                { icon:'⚙️', tip:'Settings',     p:'settings'     as const },
               ].map(btn => (
-                <button key={btn.p} title={btn.tip} onClick={() => setPanel(btn.p)} style={{
-                  ...glassPanel, border: `1px solid ${T.border}`, borderRadius: '12px',
-                  color: T.uiSub, cursor: 'pointer',
-                  padding: isTiny ? '6px 7px' : '7px 8px',
-                  fontSize: isTiny ? '12px' : '13px',
-                  lineHeight: '1', display: 'flex', alignItems: 'center', gap: '3px',
-                  transition: 'transform 0.18s ease',
-                }}>
+                <button key={btn.p} style={iconBtn} title={btn.tip} onClick={()=>setPanel(btn.p)}>
                   {btn.icon}
-                  {btn.p === 'achievements' && (
-                    <span style={{ fontSize: '8px', color: T.uiAccent }}>{unlockedCnt}</span>
-                  )}
+                  {btn.p==='achievements' && <span style={{ fontSize:'8px', color:T.uiAccent }}>{unlockedCnt}</span>}
                 </button>
               ))}
-              <button style={{
-                ...glassPanel, border: `1px solid ${T.border}`, borderRadius: '12px',
-                color: isDark ? '#ffd200' : T.uiSub, cursor: 'pointer',
-                padding: isTiny ? '6px 7px' : '7px 8px',
-                fontSize: isTiny ? '12px' : '13px',
-                transition: 'transform 0.18s ease',
-              }} onClick={() => setThemeKey(k => k === 'dark' ? 'light' : 'dark')}>
-                {isDark ? '☀️' : '🌙'}
+              <button style={{ ...iconBtn, color:isDark?'#ffd200':T.uiSub }}
+                onClick={()=>setThemeKey(k=>k==='dark'?'light':'dark')}>
+                {isDark?'☀️':'🌙'}
               </button>
             </div>
           </div>
 
-          {/* Score Row */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: isTiny ? 'repeat(2,minmax(0,1fr))' : 'repeat(4,minmax(0,1fr))',
-            gap: isTiny ? '4px' : '6px',
-            flexShrink: 0,
-          }}>
+          {/* ── SCORE ROW (Miniaturized) ───────────────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'4px', flexShrink:0 }}>
             {[
-              { l: 'Score', v: hud.score, accent: false },
-              { l: 'Best', v: hud.highScore, accent: true },
-              { l: 'Speed', v: `${speedLabel}x`, accent: false },
-              { l: 'Length', v: hud.length, accent: false },
+              { l:'Score',  v:score,        accent:false },
+              { l:'Best',   v:highScore,    accent:true  },
+              { l:'Speed',  v:`${speedLabel}x`,  accent:false },
+              { l:'Length', v:snake.length, accent:false },
             ].map(it => (
-              <div key={it.l} style={{ ...scoreBox, position: 'relative', overflow: 'hidden' }}>
-                <div style={{
-                  position: 'absolute', inset: '0 auto auto 0', width: '40%', height: '1px',
-                  background: `linear-gradient(90deg, ${T.uiAccent}66, transparent)`,
-                }} />
-                <span style={{
-                  display: 'block', fontSize: '7px', fontWeight: 700,
-                  letterSpacing: '0.16em', color: T.uiSub, textTransform: 'uppercase', marginBottom: '4px',
-                }}>
-                  {it.l}
-                </span>
-                <span style={{
-                  display: 'block', fontFamily: "'Orbitron',monospace",
-                  fontSize: isTiny ? '12px' : isCompact ? '13px' : 'clamp(12px,2.5vw,17px)',
-                  fontWeight: 800, color: it.accent ? T.uiAccent : T.uiText, lineHeight: '1.1',
-                }}>
-                  {it.v}
-                </span>
+              <div key={it.l} style={scoreBox}>
+                <span style={{ display:'block', fontSize:'8px', fontWeight:700, letterSpacing:'0.12em', color:T.uiSub, textTransform:'uppercase' }}>{it.l}</span>
+                <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'clamp(11px,3vw,14px)', fontWeight:700, color:it.accent?T.uiAccent:T.uiText, lineHeight:'1.15' }}>{it.v}</span>
               </div>
             ))}
           </div>
 
-          {/* Canvas Area */}
-          <div style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            minHeight: 0, position: 'relative',
-          }}>
-            <div
-              style={{
-                position: 'relative', width: boardSize, height: boardSize,
-                borderRadius: '24px', overflow: 'hidden',
-                background: isDark ? 'rgba(8,12,28,0.56)' : 'rgba(255,255,255,0.60)',
-                border: `1px solid ${isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.72)'}`,
-                boxShadow: isDark
-                  ? `0 20px 50px rgba(0,0,0,0.45), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.10)`
-                  : `0 20px 46px rgba(77,119,191,0.18), 0 0 0 1.5px ${T.border}, inset 0 1px 0 rgba(255,255,255,0.78)`,
-                backdropFilter: 'blur(20px)',
-                touchAction: 'none',
-                flexShrink: 0,
-                transition: 'box-shadow 0.5s ease',
-              }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
+          {/* ── GAME AREA (Given maximum flexible space) ───────────────────────────── */}
+          <div ref={gameAreaRef} style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', minHeight:0, position:'relative' }}>
+            <div style={{
+              position:'relative', width:CS*canvasScale, height:CS*canvasScale,
+              borderRadius:'14px', overflow:'hidden',
+              boxShadow:isDark
+                ? `0 0 0 1.5px ${T.border},0 0 45px ${T.uiAccent2}1a,0 16px 50px rgba(0,0,0,0.75)`
+                : `0 0 0 1.5px ${T.border},0 12px 44px rgba(0,114,255,0.11)`,
+            }}
+              onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
             >
-              {/* Running glow */}
-              <div style={{
-                position: 'absolute', inset: 0, borderRadius: '24px', pointerEvents: 'none', zIndex: 2,
-                boxShadow: isRunning ? `inset 0 0 30px ${isDark ? 'rgba(96,239,255,0.15)' : 'rgba(0,114,255,0.12)'}` : 'none',
-                transition: 'box-shadow 0.5s ease',
-              }} />
+              <canvas ref={canvasRef} width={CS} height={CS}
+                style={{ display:'block', width:CS*canvasScale, height:CS*canvasScale }} />
 
-              {/* Sheen */}
-              <div style={{
-                position: 'absolute', inset: '0 0 auto 0', height: '30%',
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.10), transparent)',
-                pointerEvents: 'none', zIndex: 1, borderRadius: '24px 24px 0 0',
-              }} />
-
-              <canvas ref={canvasRef} style={{ display: 'block', width: boardSize, height: boardSize }} />
-
-              {/* Idle Overlay */}
+              {/* IDLE overlay with Dual Game Mode Selection */}
               {isIdle && (
                 <div style={{
-                  position: 'absolute', inset: 0,
-                  background: isDark
-                    ? 'linear-gradient(180deg, rgba(8,12,28,0.92), rgba(8,12,28,0.80))'
-                    : 'linear-gradient(180deg, rgba(255,255,255,0.90), rgba(245,249,255,0.80))',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: isTiny ? '10px' : '13px',
-                  borderRadius: '24px', backdropFilter: 'blur(18px) saturate(145%)',
-                  padding: isTiny ? '14px' : isCompact ? '16px' : '24px',
-                  animation: 'fadeUp 0.35s ease',
-                  zIndex: 3,
+                  position:'absolute', inset:0, background:T.modalBg,
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  gap:'12px', borderRadius:'14px', backdropFilter:'blur(12px)', padding:'20px',
+                  animation:'fadeUp 0.3s ease',
                 }}>
-                  <div style={{
-                    fontFamily: "'Orbitron',monospace",
-                    fontSize: isTiny ? '28px' : isCompact ? '32px' : 'clamp(28px,7vw,46px)',
-                    fontWeight: 900, color: T.uiAccent, letterSpacing: '0.18em',
-                    textShadow: isDark ? `0 0 28px ${T.uiAccent}` : '0 12px 28px rgba(0,114,255,0.20)',
-                  }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,7vw,44px)', fontWeight:900, color:T.uiAccent, letterSpacing:'0.15em', textShadow:isDark?`0 0 28px ${T.uiAccent}`:'' }}>
                     SNAKE
                   </div>
-
-                  {!isTiny && (
-                    <p style={{
-                      color: T.uiSub, fontSize: '11px', textAlign: 'center',
-                      letterSpacing: '0.22em', textTransform: 'uppercase', margin: 0,
-                    }}>
-                      Neon arcade, rebuilt for touch
-                    </p>
-                  )}
-
-                  {/* Mode Selection */}
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: isTiny ? '1fr' : '1fr 1fr',
-                    gap: '7px', width: '100%', maxWidth: isTiny ? '200px' : '300px',
-                  }}>
-                    {([
-                      ['CLASSIC', '🧱', 'Borders are fatal'],
-                      ['FREE_ROAM', '🌀', 'Wrap around edges'],
-                    ] as const).map(([mode, icon, sub]) => (
-                      <button key={mode} style={{
-                        ...glassPanel, padding: isTiny ? '10px 8px' : '12px 8px', borderRadius: '16px',
-                        background: gameMode === mode
-                          ? (isDark ? 'linear-gradient(180deg, rgba(96,239,255,0.20), rgba(10,18,36,0.72))' : 'linear-gradient(180deg, rgba(0,114,255,0.10), rgba(255,255,255,0.72))')
-                          : glassPanel.background as string,
-                        border: `1.5px solid ${gameMode === mode ? T.uiAccent : T.border}`,
-                        color: gameMode === mode ? T.uiAccent : T.uiSub, cursor: 'pointer',
-                        transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                        boxShadow: gameMode === mode ? `0 16px 28px ${T.uiAccent}18` : glassPanel.boxShadow as string,
-                      }} onClick={() => setGameMode(mode as GameMode)}>
-                        <span style={{ fontSize: isTiny ? '16px' : '18px', marginBottom: '3px' }}>{icon}</span>
-                        <span style={{ fontFamily: "'Orbitron',monospace", fontSize: isTiny ? '9px' : '11px', fontWeight: 700 }}>
-                          {mode.replace('_', ' ')}
-                        </span>
-                        {!isTiny && <span style={{ fontSize: '8px', marginTop: '2px', opacity: 0.75 }}>{sub}</span>}
-                        <span style={{ fontSize: '9px', color: T.uiAccent2, marginTop: '3px' }}>Lv.{savedLevels[mode as GameMode]}</span>
-                      </button>
-                    ))}
+                  
+                  {/* Game Mode Selection */}
+                  <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '300px' }}>
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'CLASSIC' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'CLASSIC' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'CLASSIC' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('CLASSIC')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🧱</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>CLASSIC</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Borders are fatal</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['CLASSIC']}</span>
+                    </button>
+                    
+                    <button style={{
+                      flex: 1, padding: '12px 8px', borderRadius: '12px',
+                      background: gameMode === 'FREE_ROAM' ? `${T.uiAccent}22` : 'transparent',
+                      border: `1.5px solid ${gameMode === 'FREE_ROAM' ? T.uiAccent : T.border}`,
+                      color: gameMode === 'FREE_ROAM' ? T.uiAccent : T.uiSub, cursor: 'pointer',
+                      transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                    }} onClick={() => setGameMode('FREE_ROAM')}>
+                      <span style={{ fontSize: '18px', marginBottom: '4px' }}>🌀</span>
+                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700 }}>FREE ROAM</span>
+                      <span style={{ fontSize: '9px', marginTop: '2px', opacity: 0.8 }}>Wrap around borders</span>
+                      <span style={{ fontSize: '10px', color: T.uiAccent2, marginTop: '4px' }}>Lv. {savedLevels['FREE_ROAM']}</span>
+                    </button>
                   </div>
 
-                  <button
-                    style={{ ...btnPri, fontSize: isTiny ? '12px' : '13px', padding: isTiny ? '12px 28px' : '13px 36px', textTransform: 'uppercase', letterSpacing: '0.16em' }}
-                    onClick={startGame}
-                  >
+                  <p style={{ color:T.uiSub, fontSize:'11px', textAlign:'center', letterSpacing:'0.04em', maxWidth:'220px', lineHeight:'1.5', margin: '4px 0' }}>
+                    Arrow / WASD to steer · SPACE to pause
+                  </p>
+                  
+                  <button style={{ ...btnPri, fontSize:'14px', padding:'14px 44px', textTransform:'uppercase', letterSpacing:'0.15em', boxShadow: `0 8px 24px ${T.uiAccent}55` }} onClick={startGame}>
                     START GAME
                   </button>
                 </div>
               )}
 
-              {/* Game Over Overlay */}
+              {/* GAME OVER overlay */}
               {isOver && (
                 <div style={{
-                  position: 'absolute', inset: 0,
-                  background: isDark
-                    ? 'linear-gradient(180deg, rgba(12,6,20,0.92), rgba(8,10,26,0.86))'
-                    : 'linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,249,255,0.84))',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: isTiny ? '8px' : '11px',
-                  borderRadius: '24px', backdropFilter: 'blur(18px) saturate(145%)',
-                  padding: isTiny ? '14px' : '20px',
-                  animation: 'fadeUp 0.35s ease',
-                  zIndex: 3,
+                  position:'absolute', inset:0, background:T.modalBg,
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  gap:'9px', borderRadius:'14px', backdropFilter:'blur(14px)', padding:'20px',
+                  animation:'fadeUp 0.35s ease',
                 }}>
-                  <div style={{
-                    fontFamily: "'Orbitron',monospace",
-                    fontSize: isTiny ? '16px' : isCompact ? '20px' : 'clamp(18px,5vw,26px)',
-                    fontWeight: 900, color: T.food1, letterSpacing: '0.14em',
-                    textShadow: isDark ? `0 0 22px ${T.food1}` : '0 10px 24px rgba(255,65,108,0.18)',
-                  }}>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(18px,5vw,28px)', fontWeight:900, color:T.food1, letterSpacing:'0.1em', textShadow:isDark?`0 0 22px ${T.food1}`:'' }}>
                     GAME OVER
                   </div>
-
-                  <div style={{ ...scoreBox, padding: isTiny ? '10px 14px' : '12px 20px', minWidth: isTiny ? 130 : 160 }}>
-                    <div style={{ fontSize: '8px', letterSpacing: '0.2em', textTransform: 'uppercase', color: T.uiSub, marginBottom: '6px' }}>
-                      Final Score
-                    </div>
-                    <div style={{
-                      fontFamily: "'Orbitron',monospace",
-                      fontSize: isTiny ? '24px' : isCompact ? '30px' : 'clamp(26px,6vw,42px)',
-                      fontWeight: 900, color: T.uiText, lineHeight: 1,
-                    }}>
-                      {hud.score}<span style={{ fontSize: '12px', color: T.uiSub, marginLeft: '2px' }}>pts</span>
-                    </div>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'clamp(28px,6vw,44px)', fontWeight:900, color:T.uiText, lineHeight:1 }}>
+                    {score}<span style={{ fontSize:'14px', color:T.uiSub, marginLeft:'3px' }}>pts</span>
                   </div>
-
-                  {hud.score >= hud.highScore && hud.score > 0 && (
-                    <div style={{
-                      ...glassPanel, fontFamily: "'Orbitron',monospace", fontSize: '10px',
-                      color: T.uiAccent, letterSpacing: '0.1em', animation: 'pulseGlow 1s infinite',
-                      padding: '7px 10px', borderRadius: '999px',
-                    }}>
+                  {score>=highScore&&score>0 && (
+                    <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'11px', color:T.uiAccent, letterSpacing:'0.08em', animation:'pulseGlow 1s infinite' }}>
                       🏆 NEW {difficulty} RECORD!
                     </div>
                   )}
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', width: '100%', maxWidth: 220 }}>
-                    {[
-                      ['TIME', `${hud.totalTime}s`],
-                      ['LENGTH', hud.length],
-                      ['LEVEL', hud.level],
-                      ['EATEN', hud.foodEaten],
-                    ].map(([l, v], i) => (
-                      <div key={l} style={{ ...scoreBox, padding: isTiny ? '7px 6px' : '9px 8px', animation: `staggerIn 0.3s ease ${i * 0.08}s both` }}>
-                        <span style={{ display: 'block', fontSize: '8px', fontWeight: 700, color: T.uiSub, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '3px' }}>
-                          {l}
-                        </span>
-                        <span style={{ display: 'block', fontFamily: "'Orbitron',monospace", fontSize: isTiny ? '12px' : '14px', fontWeight: 700, color: T.uiText }}>
-                          {v}
-                        </span>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'5px', width:'100%', maxWidth:220 }}>
+                    {[['TIME',`${totalTime}s`],['LENGTH',snake.length],['LEVEL',level],['EATEN',foodEaten]].map(([l,v]) => (
+                      <div key={l} style={{ ...scoreBox, padding:'7px' }}>
+                        <span style={{ display:'block', fontSize:'9px', fontWeight:700, color:T.uiSub, letterSpacing:'0.1em', textTransform:'uppercase' }}>{l}</span>
+                        <span style={{ display:'block', fontFamily:"'Orbitron',monospace", fontSize:'15px', fontWeight:700, color:T.uiText }}>{v}</span>
                       </div>
                     ))}
                   </div>
-
-                  <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                    <button style={{ ...btnPri, padding: isTiny ? '10px 20px' : '11px 24px' }} onClick={startGame}>
-                      ↺ PLAY AGAIN
-                    </button>
-                    <button style={{ ...btnSec, padding: isTiny ? '9px 12px' : '10px 14px' }} onClick={() => { gameRef.current.gameState = 'IDLE'; syncUI(); }}>
-                      MENU
-                    </button>
+                  <div style={{ display:'flex', gap:'7px', marginTop:'4px' }}>
+                    <button style={{ ...btnPri, padding:'11px 26px' }} onClick={startGame}>↺ PLAY AGAIN</button>
+                    <button style={{ ...btnSec, padding:'10px 14px' }} onClick={()=>setGameState('IDLE')}>MENU</button>
                   </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Active Power-ups / Combo */}
-          <div style={{
-            display: 'flex', gap: '6px', justifyContent: 'center',
-            flexShrink: 0, minHeight: isTiny ? 0 : 28, flexWrap: 'wrap',
-          }}>
-            {hud.activePower && (() => {
-              const info: Record<PowerUpType, { icon: string; label: string; color: string }> = {
-                SHIELD: { icon: '🛡', label: 'SHIELD', color: '#ffd200' },
-                SLOW: { icon: '🐢', label: 'SLOW-MO', color: '#00c6ff' },
-                DOUBLE: { icon: '×2', label: 'DOUBLE', color: '#00ff87' },
-                GHOST_MODE: { icon: '👻', label: 'GHOST', color: '#cc88ff' },
+          {/* ── ACTIVE POWER-UPS ──────────────────────────────────────── */}
+          <div style={{ display:'flex', gap:'5px', justifyContent:'center', flexShrink:0, minHeight:26, flexWrap:'wrap' }}>
+            {activePower && (() => {
+              const info:Record<PowerUpType,{icon:string;label:string;color:string}> = {
+                SHIELD:     {icon:'🛡',label:'SHIELD',  color:'#ffd200'},
+                SLOW:       {icon:'🐢',label:'SLOW-MO', color:'#00c6ff'},
+                DOUBLE:     {icon:'×2',label:'DOUBLE',  color:'#00ff87'},
+                GHOST_MODE: {icon:'👻',label:'GHOST',   color:'#cc88ff'},
               };
-              const nfo = info[hud.activePower.type];
-              const pct = hud.activePower.ttl / 200;
+              const nfo=info[activePower.type], pct=activePower.ttl/200;
               return (
                 <div style={{
-                  background: isDark ? `${nfo.color}16` : 'rgba(255,255,255,0.72)',
-                  border: `1px solid ${nfo.color}55`, borderRadius: '12px',
-                  padding: isTiny ? '5px 9px' : '7px 11px',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
-                  fontFamily: "'Orbitron',monospace", fontSize: '9px', fontWeight: 700, color: nfo.color,
-                  boxShadow: `0 12px 24px ${nfo.color}16`, backdropFilter: 'blur(12px)',
+                  background:`${nfo.color}18`, border:`1px solid ${nfo.color}55`,
+                  borderRadius:'8px', padding:'3px 10px',
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:'2px',
+                  fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:nfo.color,
                 }}>
                   <span>{nfo.icon} {nfo.label}</span>
-                  <div style={{ width: 60, height: 3, background: `${nfo.color}28`, borderRadius: 2 }}>
-                    <div style={{ width: `${pct * 100}%`, height: '100%', background: nfo.color, borderRadius: 2, transition: 'width 0.1s' }} />
+                  <div style={{ width:70, height:3, background:`${nfo.color}28`, borderRadius:2 }}>
+                    <div style={{ width:`${pct*100}%`, height:'100%', background:nfo.color, borderRadius:2, transition:'width 0.1s' }}/>
                   </div>
                 </div>
               );
             })()}
-            {hud.combo > 1 && (
+            {comboStreak>1 && (
               <div style={{
-                background: isDark ? 'rgba(255,106,0,0.15)' : 'rgba(255,255,255,0.75)',
-                border: '1px solid rgba(255,106,0,0.5)', borderRadius: '12px',
-                padding: isTiny ? '5px 9px' : '7px 11px',
-                fontFamily: "'Orbitron',monospace", fontSize: '9px', fontWeight: 700, color: '#ff6a00',
-                animation: 'pulseGlow 0.8s infinite', boxShadow: '0 12px 24px rgba(255,106,0,0.14)',
-                backdropFilter: 'blur(12px)',
-              }}>
-                🔥 ×{hud.combo} COMBO
-              </div>
+                background:'rgba(255,106,0,0.15)', border:'1px solid rgba(255,106,0,0.5)',
+                borderRadius:'8px', padding:'3px 10px',
+                fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:'#ff6a00',
+                animation:'pulseGlow 0.8s infinite',
+              }}>🔥 ×{comboStreak} COMBO</div>
             )}
           </div>
 
-          {/* Action Buttons */}
-          <div style={{
-            ...glassPanel,
-            display: 'flex', justifyContent: 'center', gap: '6px',
-            flexShrink: 0, flexWrap: 'wrap',
-            padding: isTiny ? '7px 8px' : '8px 10px',
-            borderRadius: '18px',
-            opacity: (isRunning || isPaused || isCounting) ? 1 : 0,
-            pointerEvents: (isRunning || isPaused || isCounting) ? 'auto' : 'none',
-            transition: 'opacity 0.2s',
-          }}>
-            <button style={btnPri} onClick={togglePause}>
-              {isPaused ? '▶ RESUME' : '⏸ PAUSE'}
-            </button>
-            <button style={btnSec} onClick={startGame}>↺ RESTART</button>
-            <button style={{ ...btnSec, border: 'none', background: 'transparent' }} onClick={() => { gameRef.current.gameState = 'IDLE'; syncUI(); }}>
-              ✕ EXIT
-            </button>
+          {/* ── CONTROLS ROW ──────────────────────────────────────────── */}
+          <div style={{ display:'flex', justifyContent:'center', gap:'6px', flexShrink:0 }}>
+            {(isRunning||isPaused||isCounting) ? (
+              <>
+                <button style={{...btnPri, padding:'6px 12px'}} onClick={togglePause}>{isPaused?'▶ RESUME':'⏸ PAUSE'}</button>
+                <button style={{...btnSec, padding:'6px 12px'}} onClick={startGame}>↺ RESTART</button>
+                <button style={{...btnSec, border: 'none', background: 'transparent', padding:'6px 12px'}} onClick={() => setGameState('IDLE')}>✕ EXIT</button>
+              </>
+            ) : isOver ? (
+              <></> // Buttons moved into Game Over modal
+            ) : (
+              <></> // Start buttons are inside IDLE modal
+            )}
           </div>
 
-          {/* D-Pad */}
-          <div style={{
-            ...glassPanel,
-            display: 'grid',
-            gridTemplateColumns: `repeat(3,${dPadBtnSize}px)`,
-            gridTemplateRows: `repeat(3,${dPadBtnSize}px)`,
-            gap: isTiny ? '6px' : isCompact ? '7px' : '9px',
-            margin: '0 auto',
-            flexShrink: 0,
-            touchAction: 'none',
-            padding: isTiny ? '9px' : isCompact ? '11px' : '13px',
-            borderRadius: '22px',
-          }}>
-            <div />
-            <DBtn d="UP" lbl="▲" ariaLabel="Move up" />
-            <div />
-            <DBtn d="LEFT" lbl="◀" ariaLabel="Move left" />
-            <div style={{
-              width: dPadBtnSize, height: dPadBtnSize, borderRadius: '12px',
-              background: T.scoreBg, border: `1px solid ${T.border}`,
-              opacity: 0.3, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: T.uiSub, fontSize: '14px',
-            }}>
-              ●
-            </div>
-            <DBtn d="RIGHT" lbl="▶" ariaLabel="Move right" />
-            <div />
-            <DBtn d="DOWN" lbl="▼" ariaLabel="Move down" />
-            <div />
+          {/* ── D-PAD (Miniaturized) ──────────────────────────────────── */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,38px)', gridTemplateRows:'repeat(3,38px)', gap:'4px', margin:'0 auto', flexShrink:0 }}>
+            <div/><DBtn d="UP"  lbl="▲"/><div/>
+            <DBtn d="LEFT" lbl="◀"/>
+            <div style={{ width:38,height:38,borderRadius:'8px',background:T.scoreBg,border:`1px solid ${T.border}`,opacity:0.3,display:'flex',alignItems:'center',justifyContent:'center',color:T.uiSub,fontSize:'14px' }}>●</div>
+            <DBtn d="RIGHT" lbl="▶"/>
+            <div/><DBtn d="DOWN"  lbl="▼"/><div/>
           </div>
 
-          {/* Keyboard hint */}
-          {!isTiny && !isCompact && (
-            <p style={{
-              textAlign: 'center', color: T.uiSub, fontSize: '8px',
-              letterSpacing: '0.14em', flexShrink: 0, textTransform: 'uppercase', opacity: 0.8,
-            }}>
-              ↑↓←→ · WASD · SPACE=pause · ENTER=start
-            </p>
-          )}
+          <p style={{ textAlign:'center', color:T.uiSub, fontSize:'8px', letterSpacing:'0.07em', flexShrink:0 }}>
+            ↑↓←→ · WASD · SPACE=pause · ENTER=start
+          </p>
         </div>
 
-        {/* Settings Panel */}
-        {panel === 'settings' && (
+        {/* ── PANELS (Settings and Skins Fixed state hooks) ─────────── */}
+        {panel==='settings' && (
           <PanelShell>
             {panelTitle('SETTINGS')}
-            <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ width:'100%', maxWidth:380, display:'flex', flexDirection:'column', gap:'9px' }}>
               {[
-                { label: 'SHOW GRID', val: showGrid, fn: setShowGrid },
-                { label: 'HAPTIC FEEDBACK', val: haptics, fn: setHaptics },
-                { label: 'SOUND EFFECTS', val: soundOn, fn: setSoundOn },
+                { label:'SHOW GRID',           val:showGrid, fn:setShowGrid },
+                { label:'HAPTIC FEEDBACK',     val:haptics,  fn:setHaptics  },
               ].map(o => (
-                <div key={o.label} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  background: T.scoreBg, border: `1px solid ${T.border}`,
-                  borderRadius: '12px', padding: '12px 14px',
-                }}>
-                  <span style={{ color: T.uiText, fontWeight: 600, fontSize: '13px' }}>{o.label}</span>
+                <div key={o.label} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                  <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', letterSpacing:'0.05em' }}>{o.label}</span>
                   <button style={{
-                    background: o.val ? T.btnPri : 'transparent',
-                    border: `1.5px solid ${o.val ? 'transparent' : T.btnSecBdr}`,
-                    borderRadius: '20px', width: 44, height: 22, cursor: 'pointer',
-                    position: 'relative', transition: 'all 0.2s',
+                    background:o.val?T.btnPri:'transparent', border:`1.5px solid ${o.val?'transparent':T.btnSecBdr}`,
+                    borderRadius:'20px', width:46, height:24, cursor:'pointer', position:'relative', transition:'all 0.2s',
                   }} onClick={() => o.fn(!o.val)}>
-                    <div style={{
-                      position: 'absolute', top: 2, left: o.val ? 22 : 2,
-                      width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                      transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                    }} />
+                    <div style={{ position:'absolute', top:2, left:o.val?22:2, width:20, height:20, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.3)' }}/>
                   </button>
                 </div>
               ))}
-
-              <div style={{ background: T.scoreBg, border: `1px solid ${T.border}`, borderRadius: '12px', padding: '12px 14px' }}>
-                <span style={{ color: T.uiText, fontWeight: 600, fontSize: '13px', display: 'block', marginBottom: '8px' }}>DIFFICULTY</span>
-                <div style={{ display: 'flex', gap: '5px' }}>
-                  {DIFFS.map(d => (
-                    <button key={d} style={{
-                      ...btnSec, flex: 1,
-                      background: difficulty === d ? T.btnPri : 'transparent',
-                      color: difficulty === d ? T.btnPriTxt : T.btnSecTxt,
-                      border: `1.5px solid ${difficulty === d ? 'transparent' : T.btnSecBdr}`,
-                    }} onClick={() => setDifficulty(d)}>{d}</button>
+              <div style={{ background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', display:'block', marginBottom:'8px', letterSpacing:'0.05em' }}>DIFFICULTY</span>
+                <div style={{ display:'flex', gap:'5px' }}>
+                  {DIFFS.map(d=>(
+                    <button key={d} style={{ ...btnSec, flex:1, background:difficulty===d?T.btnPri:'transparent', color:difficulty===d?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${difficulty===d?'transparent':T.btnSecBdr}` }}
+                      onClick={() => setDifficulty(d)}>{d}</button>
                   ))}
                 </div>
               </div>
-
-              <div style={{ background: T.scoreBg, border: `1px solid ${T.border}`, borderRadius: '12px', padding: '12px 14px' }}>
-                <span style={{ color: T.uiText, fontWeight: 600, fontSize: '13px', display: 'block', marginBottom: '8px' }}>THEME</span>
-                <div style={{ display: 'flex', gap: '5px' }}>
-                  {(['light', 'dark'] as ThemeKey[]).map(k => (
-                    <button key={k} style={{
-                      ...btnSec, flex: 1,
-                      background: themeKey === k ? T.btnPri : 'transparent',
-                      color: themeKey === k ? T.btnPriTxt : T.btnSecTxt,
-                      border: `1.5px solid ${themeKey === k ? 'transparent' : T.btnSecBdr}`,
-                    }} onClick={() => setThemeKey(k)}>{k === 'dark' ? '🌙 DARK' : '☀️ LIGHT'}</button>
+              <div style={{ background:T.scoreBg, border:`1px solid ${T.border}`, borderRadius:'12px', padding:'12px 16px' }}>
+                <span style={{ color:T.uiText, fontWeight:600, fontSize:'13px', display:'block', marginBottom:'8px', letterSpacing:'0.05em' }}>THEME</span>
+                <div style={{ display:'flex', gap:'5px' }}>
+                  {(['light','dark'] as ThemeKey[]).map(k=>(
+                    <button key={k} style={{ ...btnSec, flex:1, background:themeKey===k?T.btnPri:'transparent', color:themeKey===k?T.btnPriTxt:T.btnSecTxt, border:`1.5px solid ${themeKey===k?'transparent':T.btnSecBdr}` }}
+                      onClick={() => setThemeKey(k)}>{k==='dark'?'🌙 DARK':'☀️ LIGHT'}</button>
                   ))}
                 </div>
               </div>
             </div>
-            <button style={{ ...btnPri, marginTop: '6px' }} onClick={() => setPanel(null)}>✓ CLOSE</button>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
           </PanelShell>
         )}
 
-        {/* Skins Panel */}
-        {panel === 'skins' && (
+        {panel==='skins' && (
           <PanelShell>
             {panelTitle('SKINS')}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '7px', width: '100%', maxWidth: 360 }}>
-              {(Object.entries(SKIN_DEFS) as [SkinId, typeof SKIN_DEFS[SkinId]][]).map(([id, def]) => (
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'7px', width:'100%', maxWidth:380 }}>
+              {(Object.entries(SKIN_DEFS) as [SkinId,typeof SKIN_DEFS[SkinId]][]).map(([id,def]) => (
                 <button key={id} style={{
-                  background: skin === id ? `${T.uiAccent}20` : T.scoreBg,
-                  border: `1.5px solid ${skin === id ? T.uiAccent : T.border}`,
-                  borderRadius: '12px', padding: '10px 7px', cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'all 0.15s',
+                  background:skin===id?`${T.uiAccent}20`:T.scoreBg,
+                  border:`1.5px solid ${skin===id?T.uiAccent:T.border}`,
+                  borderRadius:'12px', padding:'12px 8px', cursor:'pointer',
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', transition:'all 0.15s',
                 }} onClick={() => setSkin(id)}>
-                  <span style={{ fontSize: '22px' }}>{def.icon}</span>
-                  <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '9px', fontWeight: 700, color: skin === id ? T.uiAccent : T.uiText }}>{def.name}</span>
-                  <div style={{ display: 'flex', gap: '3px' }}>
-                    {[def.head[0], def.body[0], def.body[1]].map((c, i) => (
-                      <div key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />
+                  <span style={{ fontSize:'24px' }}>{def.icon}</span>
+                  <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', fontWeight:700, color:skin===id?T.uiAccent:T.uiText, letterSpacing:'0.05em' }}>{def.name}</span>
+                  <div style={{ display:'flex', gap:'3px' }}>
+                    {[def.head[0],def.body[0],def.body[1]].map((c,i) => (
+                      <div key={i} style={{ width:9,height:9,borderRadius:'50%',background:c }}/>
                     ))}
                   </div>
-                  {skin === id && <span style={{ fontSize: '11px' }}>✓</span>}
+                  {skin===id && <span style={{ fontSize:'12px' }}>✓</span>}
                 </button>
               ))}
             </div>
-            <button style={{ ...btnPri, marginTop: '6px' }} onClick={() => setPanel(null)}>✓ CLOSE</button>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
           </PanelShell>
         )}
 
-        {/* Achievements Panel */}
-        {panel === 'achievements' && (
+        {panel==='achievements' && (
           <PanelShell>
             {panelTitle('ACHIEVEMENTS')}
-            <p style={{ color: T.uiSub, fontSize: '12px', margin: 0 }}>{unlockedCnt} / {achievements.length} unlocked</p>
-            <div style={{ width: '100%', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <p style={{ color:T.uiSub, fontSize:'12px', margin:0 }}>{unlockedCnt} / {achievements.length} unlocked</p>
+            <div style={{ width:'100%', maxWidth:420, display:'flex', flexDirection:'column', gap:'6px' }}>
               {achievements.map(a => (
                 <div key={a.id} style={{
-                  background: a.unlocked ? T.scoreBg : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.025)'),
-                  border: `1px solid ${a.unlocked ? T.uiAccent + '44' : T.border}`,
-                  borderRadius: '10px', padding: '9px 12px',
-                  display: 'flex', alignItems: 'center', gap: '9px', opacity: a.unlocked ? 1 : 0.42,
+                  background:a.unlocked?T.scoreBg:(isDark?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.025)'),
+                  border:`1px solid ${a.unlocked?T.uiAccent+'44':T.border}`,
+                  borderRadius:'11px', padding:'10px 13px',
+                  display:'flex', alignItems:'center', gap:'10px', opacity:a.unlocked?1:0.42,
                 }}>
-                  <span style={{ fontSize: '18px', minWidth: 24 }}>{a.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: '11px', color: T.uiText, fontFamily: "'Orbitron',monospace" }}>{a.label}</div>
-                    <div style={{ fontSize: '10px', color: T.uiSub }}>{a.desc}</div>
+                  <span style={{ fontSize:'20px', minWidth:26 }}>{a.icon}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:700, fontSize:'12px', color:T.uiText, fontFamily:"'Orbitron',monospace", letterSpacing:'0.04em' }}>{a.label}</div>
+                    <div style={{ fontSize:'11px', color:T.uiSub }}>{a.desc}</div>
                   </div>
-                  {a.unlocked && <span style={{ color: T.uiAccent, fontSize: '13px' }}>✓</span>}
+                  {a.unlocked && <span style={{ color:T.uiAccent, fontSize:'14px' }}>✓</span>}
                 </div>
               ))}
             </div>
-            <button style={{ ...btnPri, marginTop: '6px' }} onClick={() => setPanel(null)}>✓ CLOSE</button>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
           </PanelShell>
         )}
 
-        {/* High Scores Panel */}
-        {panel === 'scores' && (
+        {panel==='scores' && (
           <PanelShell>
             {panelTitle('HIGH SCORES')}
-            <div style={{ width: '100%', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: '7px' }}>
-              {DIFFS.map((d, i) => (
-                <div key={d} style={{ ...scoreBox, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                    <span style={{ fontSize: '20px' }}>{i === 0 ? '🧊' : i === 1 ? '🎯' : '🚀'}</span>
-                    <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '12px', fontWeight: 700, color: T.uiText }}>{d}</span>
+            <div style={{ width:'100%', maxWidth:340, display:'flex', flexDirection:'column', gap:'7px' }}>
+              {DIFFS.map((d,i) => (
+                <div key={d} style={{ ...scoreBox, display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 18px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                    <span style={{ fontSize:'22px' }}>{i===0?'🧊':i===1?'🎯':'🚀'}</span>
+                    <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'13px', fontWeight:700, color:T.uiText }}>{d}</span>
                   </div>
-                  <span style={{ fontFamily: "'Orbitron',monospace", fontSize: '20px', fontWeight: 900, color: T.uiAccent }}>{highScores[d] ?? 0}</span>
+                  <span style={{ fontFamily:"'Orbitron',monospace", fontSize:'22px', fontWeight:900, color:T.uiAccent }}>{highScores[d]??0}</span>
                 </div>
               ))}
-              <div style={{ ...scoreBox, padding: '13px', textAlign: 'center' }}>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: '9px', color: T.uiSub, marginBottom: '4px', letterSpacing: '0.1em' }}>TOTAL FOOD EATEN</div>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: '22px', fontWeight: 900, color: T.uiAccent }}>{hud.foodEaten}</div>
+              <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>TOTAL FOOD EATEN</div>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'24px', fontWeight:900, color:T.uiAccent }}>{foodEaten}</div>
               </div>
-              <div style={{ ...scoreBox, padding: '13px', textAlign: 'center' }}>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: '9px', color: T.uiSub, marginBottom: '4px', letterSpacing: '0.1em' }}>ACHIEVEMENTS</div>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: '20px', fontWeight: 900, color: T.uiAccent2 }}>{unlockedCnt}/{achievements.length}</div>
+              <div style={{ ...scoreBox, padding:'14px', textAlign:'center' }}>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'10px', color:T.uiSub, marginBottom:'4px', letterSpacing:'0.1em' }}>ACHIEVEMENTS</div>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:'22px', fontWeight:900, color:T.uiAccent2 }}>{unlockedCnt}/{achievements.length}</div>
               </div>
             </div>
-            <button style={{ ...btnPri, marginTop: '6px' }} onClick={() => setPanel(null)}>✓ CLOSE</button>
+            <button style={{ ...btnPri, marginTop:'4px' }} onClick={()=>setPanel(null)}>✓ CLOSE</button>
           </PanelShell>
         )}
 
-        {/* Achievement Toast */}
+        {/* ── ACHIEVEMENT TOAST ────────────────────────────────────────── */}
         {newAch && (
           <div style={{
-            position: 'fixed',
-            right: 12,
-            zIndex: 200,
-            background: isDark
-              ? 'linear-gradient(180deg, rgba(10,8,28,0.97), rgba(8,14,32,0.94))'
-              : 'linear-gradient(180deg, rgba(255,255,255,0.97), rgba(244,249,255,0.96))',
-            border: `1.5px solid ${T.uiAccent}`,
-            borderRadius: '16px', padding: '11px 14px',
-            display: 'flex', alignItems: 'center', gap: '9px',
-            boxShadow: '0 16px 32px rgba(0,0,0,0.22)',
-            animation: 'achSlide 0.4s ease',
-            backdropFilter: 'blur(18px)', maxWidth: '250px',
-            bottom: 'max(20px, calc(20px + env(safe-area-inset-bottom)))',
+            position:'fixed', bottom:20, right:14, zIndex:200,
+            background:isDark?'rgba(10,8,28,0.97)':'rgba(255,255,255,0.97)',
+            border:`1.5px solid ${T.uiAccent}`,
+            borderRadius:'14px', padding:'11px 15px',
+            display:'flex', alignItems:'center', gap:'10px',
+            boxShadow:`0 8px 28px rgba(0,0,0,0.28)`,
+            animation:'achSlide 0.4s ease',
+            backdropFilter:'blur(12px)', maxWidth:'255px',
           }}>
-            <span style={{ fontSize: '24px' }}>{newAch.icon}</span>
+            <span style={{ fontSize:'26px' }}>{newAch.icon}</span>
             <div>
-              <div style={{ fontSize: '7px', letterSpacing: '0.12em', color: T.uiAccent, fontWeight: 700, fontFamily: "'Orbitron',monospace" }}>
-                ACHIEVEMENT UNLOCKED
-              </div>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: T.uiText, fontFamily: "'Orbitron',monospace" }}>
-                {newAch.label}
-              </div>
-              <div style={{ fontSize: '9px', color: T.uiSub }}>{newAch.desc}</div>
+              <div style={{ fontSize:'8px', letterSpacing:'0.12em', color:T.uiAccent, fontWeight:700, fontFamily:"'Orbitron',monospace" }}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{ fontSize:'12px', fontWeight:700, color:T.uiText, fontFamily:"'Orbitron',monospace" }}>{newAch.label}</div>
+              <div style={{ fontSize:'10px', color:T.uiSub }}>{newAch.desc}</div>
             </div>
           </div>
         )}
